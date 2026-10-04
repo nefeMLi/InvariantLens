@@ -1,0 +1,196 @@
+# Hypotheses
+
+Written before any model was trained or any decision scored. Anything already seen is logged as an observation, not
+a prediction. First written 2026-09-29, changed 2026-09-30 and 2026-10-04; the log at the end says what was seen
+before each change, and lines a change touched are marked with its date.
+
+## The question
+
+A world model's one-step error splits exactly into two parts. One breaks rules the true simulator always follows:
+turn the scene and the answer turns with it (C₁₆ equivariance), and total momentum and centre of mass change by known
+amounts. This part can be measured from the model alone. The other part follows the rules, so it is invisible
+without the true simulator.
+
+1. At a fixed error size, does moving error from the invisible to the visible part change how, or how often,
+   decisions go wrong?
+2. The visible part can be subtracted. How many wrong decisions go away when it is?
+3. For trained models, does the visible share of the error explain how well label-free signals catch wrong
+   decisions?
+
+The split itself is known (Elesedy & Zaidi, 2021), and so is disagreement under rotation as a label-free signal.
+What is new is the link to decisions.
+
+## Definitions
+
+| Symbol | Meaning |
+|---|---|
+| F, F̂, e | true and learned step maps, (s, a) → state one decision step later; e = F̂ − F |
+| 𝒫_G, S | average over the 16 rotations, (1/16) Σ_g ρ(g)⁻¹ f(gs, ga); S = I − 𝒫_G |
+| X, P | Σᵢ xᵢ and Σᵢ vᵢ, total position and momentum (all masses are 1) |
+| M | (1/N) B*B with B e = (Σᵢ e_x,i, Σᵢ e_v,i): spreads the mean position and velocity error over every disc |
+| V, 𝒩 | V = S + M − SM, the visible part; 𝒩 = ker S ∩ ker M, the invisible part |
+| F̂_c | 𝒫_G(F̂ − Me), the corrected model |
+
+Equal masses, equal and opposite pair forces and the push as the only outside force give two exact balance laws:
+P(F(s, a)) = P(s) + Δt·a and X(F(s, a)) = X(s) + Δt·P(s) + (Δt²/2)·a. So Se = SF̂ and Me depend only on F̂, s and a,
+and Ve needs no ground truth. F̂_c − F = (I − S)(I − M)e exactly, and both signals of F̂_c are zero. The README proves
+this; tests.py checks it. Since S and M commute, the error has four orthogonal pieces:
+
+| | Follows the balance laws | Breaks them |
+|---|---|---|
+| **Turns with the scene** | (I − S)(I − M)e: invisible | (I − S)Me: balance signal only |
+| **Breaks rotation** | S(I − M)e: symmetry signal only | SMe: both |
+
+## Frozen system
+
+| Item | Value |
+|---|---|
+| Discs | N = 5, mass 1, open 2D space. Disc 0 is the agent, disc 1 the target |
+| Pair potential | Morse, φ(r) = D(1 − e^(−a(r − r₀)))² − D, with D = 1, a = 2, r₀ = 1 |
+| Action | outside force on the agent, ‖a‖ ≤ a_max = 2, held for one decision step |
+| Integrator | velocity Verlet, 10 substeps of h = 0.01 per decision step Δt = 0.1, float64 |
+| Initial state | target and distractors uniform in a disc of radius 2; agent U[1.0, 1.5] from the target at a uniform angle; all pairs ≥ 0.8 apart, by rejection; velocities N(0, 0.3²) per component |
+| Goal | target plus a step of length U[0.5, 1.5], within ±60° of the agent-to-target direction |
+| Horizon, reward | 10 decision steps (T = 1); R = −‖x_target(T) − goal‖ |
+| Group | C₁₆, rotations by multiples of 22.5° about the origin, on positions, velocities, goal and action |
+| Bank | 500 kept situations × 16 rotations × 5 candidates; seeds 0, 1, 2, … in order, rejections logged |
+| Candidates | all drawn alike: strength m_k ~ U[0.5, 1]·a_max, direction θ_t = θ₀ + δ_k + b_k sin(2πt/T + c_k), θ₀ the agent-to-target direction, δ_k ~ N(0, 0.6²), b_k ~ U[0, 0.5], c_k ~ U[0, 2π); a rotated situation gets the rotated originals |
+| Margin | keep a situation only if (R₍₁₎ − R₍₂₎) / max(\|R₍₁₎\|, 10⁻³) > 0.05 |
+
+| Model | Description |
+|---|---|
+| M1 | message-passing network on absolute coordinates, 3 layers, width 64; does not turn with the scene |
+| M2 | M1 trained with a random continuous rotation per sample |
+| M3 | EGNN-style, non-symmetric messages; turns with the scene exactly, balance laws not built in |
+| M4 | the five M1 seeds as an ensemble |
+| M1c, M2c | M1 and M2 corrected at test time as F̂_c; no retraining |
+
+All predict (Δx, Δv) for every disc, with parameter counts within 10% and one input/output scale per quantity.
+Training: 5,000 trajectories of 10 steps with uniform random actions (plus 500 trajectories for validation); Adam, learning rate
+10⁻³ with cosine decay, batch 256, 200 epochs, best validation epoch kept; 5 seeds; float32. Every diagnostic in
+float64.
+
+**Controlled fields.** Random Fourier features over (x, v, a): 64 features, N(0, I) frequencies, uniform phases,
+Gaussian weights. u = (I − V)r₁, w = V r₂, both of unit norm under μ, the (state, action) pairs of all true candidate
+rollouts in all 16 rotations. e_α = √(1 − α²) u + α w for α ∈ {0, 0.25, 0.5, 0.75, 1}, and F̂_α = F + ε e_α with
+ε = 1%, 3% and 10% of the RMS one-step change under μ. 20 draws of (r₁, r₂). Every α has the same one-step error;
+rollout error may differ, and that is part of what is measured. The rotation-breaking share α²‖Sw‖² is reported.
+
+## Analysis choices
+
+| Choice | Value |
+|---|---|
+| Decision, wrong decision | the candidate with the highest predicted reward; wrong if it is not the true best |
+| Certificate | per orbit, 16 − max_k n_k, n_k counting how often candidate k was chosen |
+| Consistent share, coverage | share of wrong decisions in orbits where all 16 rotations agree; total certificate over total wrong |
+| Symmetry, balance signal | ‖SF̂‖ and the size of both balance residuals, averaged over all steps of the 5 candidate rollouts |
+| Ensemble signal | variance of predicted returns across M4's members, averaged over the 5 candidates |
+| Orbit vote | predicted returns averaged over the 16 rotations before choosing; M1 and M2 |
+| Visible fraction | ‖Ve‖² / ‖e‖² under μ with its three pieces; raw units, positions and velocities weighted equally (stated 2026-10-04) |
+| Uncertainty | bootstrap, 1,000 resamples, clustered by situation; over field draws for H2, over trained models for H3 (changed 2026-10-04) |
+| Undefined AUROC | a signal that is always zero has no AUROC; reported as undefined, never as 0.5 |
+
+## Checks that must pass first
+
+- **Truth:** the true simulator picks the best candidate everywhere, returns agree across orbits to 10⁻⁹, and both
+  balance laws hold to 10⁻¹²(1 + ‖X‖ + ‖P‖) under the base dynamics and both dynamics shifts.
+- **Projections:** S, M and V are idempotent and self-adjoint, and SM = MS, to 10⁻¹².
+- **Invisible control:** the simulator with D = 1.1, used as a model, has ‖Ve‖ / ‖e‖ < 10⁻¹⁰.
+- **Injection:** ‖Ve_α‖² = α², and the orbit-averaged defect equals twice the orbit mean of ‖Se‖², to 10⁻¹⁰.
+- **Correction:** F̂_c − F = (I − S)(I − M)e to 10⁻¹⁰, and F̂_c's signals are zero to 10⁻¹².
+
+## Predictions
+
+**H1, the identities hold.** Every check passes; at α = 0 all 16 rotations choose alike; M3's symmetry signal is zero
+to float64 precision while its balance signal need not be. *Confidence:* high; a failure means a bug.
+
+**H2, equal-size visible and invisible error do different damage (primary).** Error that turns with the scene makes
+the model turn with it, so its mistakes come in whole orbits (exact). For small rotation-breaking error, the change
+in each return gap is linear in the error, and averaged over the orbit it vanishes, so those mistakes scatter within
+orbits, where the certificate sees them.
+
+- **H2a, pattern.** The consistent share falls and coverage rises with α², clearest at ε = 1%. Readout: per-draw
+  least-squares slope on α², averaged, 95% interval over draws, at each ε. *Wrong if,* at the smallest ε with at
+  least 100 wrong decisions, either interval contains zero or has the wrong sign. *Confidence:* moderate.
+- **H2b, rate.** The wrong-decision rate changes with α². Same readout. *Wrong if* the intervals contain zero at all
+  three ε, which would still be worth reporting. *Confidence:* low, no guess at the sign.
+
+**H3, the visible fraction explains the signals.** Across (model, seed, shift) units, each signal's AUROC for wrong
+decisions rises with the visible fraction: Spearman interval above zero, with certificate tightness beside it and the
+ensemble as reference. *Wrong if* the interval contains zero or lies below it. *Confidence:* moderate.
+
+**H4, correction removes wrong decisions.** M1c and M2c make fewer wrong decisions than M1 and M2, reported with an
+interval next to the share of one-step error removed, the orbit vote beside it, and the count of wrong decisions left
+(which neither signal can flag). *Wrong if* the interval contains zero or lies above it; a large error drop with no
+decision gain is reported as a result. *Confidence:* moderate, since rollout error need not fall.
+
+**H5, C₁₆ to SO(2).** The symmetry signal and decision disagreement at 100 random angles, reported descriptively.
+
+## Shifts, stopping and cutting
+
+No retraining; each shift gets its own bank with the same seeds and acceptance rule.
+
+| Shift | Truth changes | Still follows the audited rules | Theory says |
+|---|---|---|---|
+| D × 1.5 | yes | yes | the shift's own error is invisible |
+| Pair damping −c((vᵢ − vⱼ)·r̂ᵢⱼ) r̂ᵢⱼ, c = 0.5, half-step velocity | yes | yes | same |
+| Initial speeds × 2 | no | – | extrapolation; the visible part may grow |
+| Input noise σ = 0.02 on the observed starting state only (changed 2026-10-04) | no | – | measured |
+
+Masses are never shifted. Go/no-go: before training, run the continuum at ε = 3%; if the wrong-decision rate is below
+2% or above 80% at every α, change the spread of δ_k once, on the true simulator only. If time runs short, cut the
+SO(2) test, then input noise, then damping. Never cut the checks, the certificate, the corrected models, the
+intervals, the undefined-AUROC counts or the limitations.
+
+## Log
+
+**2026-09-30, candidate design** (true simulator only, no model). The first design had four full-force pushes, one
+random candidate and the goal at any angle. The random candidate was best in 231 of 500 situations (82% when the goal
+lay behind the target, 6% when ahead); pushing did worse than not pushing on average. So the bank rewarded avoiding
+contact. Changed once, to the design above: best-candidate counts 91, 116, 90, 109, 94 of 500; the agent reaches the
+target in 97.6% of rollouts; not pushing wins 1.8% of situations; 632 of 1,132 seeds rejected; orbit agreement
+3·10⁻¹³. The corrected models, orbit vote, H2a and the four-piece table were added the same day.
+
+**2026-09-30, centre of mass.** The audit first covered momentum only, so mean-position errors counted as invisible
+although the simulator fixes that mean. The centre-of-mass law was added; both laws hold to 10⁻¹⁵ on 5,000 states.
+
+**2026-10-02, controlled run.** Go/no-go at ε = 3%: 2.8–3.0% wrong across α, so the spread stayed. All checks passed.
+
+| ε | wrong rate, α = 0 → 1 | consistent-share slope | coverage slope |
+|---|---|---|---|
+| 1% | 0.2% → 0.2% | −0.41 [−0.58, −0.23] | +0.47 [+0.27, +0.66] |
+| 3% | 2.8% → 3.0% | −0.72 [−0.74, −0.69] | +0.87 [+0.86, +0.89] |
+| 10% | 26.5% → 27.7% | −0.70 [−0.71, −0.69] | +0.87 [+0.86, +0.88] |
+
+H2a held but was close to guaranteed: the share is 1 at α = 0 by H1 and already 0.23–0.34 at α² = 0.06. H2b failed
+at all three ε. At α = 1 coverage was 0.99–1.00. The fields' visible part was 97–98% rotation-breaking and about 2%
+balance-only, so H2 said little about the balance check.
+
+**2026-10-03, training.** All 15 models trained as specified. A first evaluation run was stopped before writing any
+result.
+
+**2026-10-04, smoke test** on banks of 2 and 4 situations, to test the code; its numbers aren't reported. Under input
+noise all models made identical decisions, because the noise was redrawn at every rollout step. On 100 states, M2's
+rotation-breaking share came out close to M1's, so I make no prediction about it. M1's share was seen at the same
+time, and H6a's premise that most of M1's error breaks rotation is informed by it.
+
+**2026-10-04, changes.** Input noise falls only on the observed starting state, the same draws for every model. The
+H3 interval resamples trained models, each with its five shifts, with per-type correlations also reported; the
+pooled interval decides. The H4 interval covers these five models, with the range over seeds beside it. Evaluation
+may run on a GPU in float64; results can differ only in the last digits.
+
+## New predictions, 2026-10-04
+
+Informed by the controlled run and the smoke test above; by no full learned result.
+
+**H2c, balance-only fields.** Rerun the continuum with w = (I − S)M r₂ at unit norm, which turns with the scene and
+only the balance check sees. Same draws, α and ε. The certificate is zero at every α (a check). Does the
+wrong-decision rate change with α²? Same readout as H2b. *Wrong if* the intervals contain zero at all three ε, which
+would still be worth reporting. *Confidence:* low, no guess at the sign.
+
+**H6a, learned mistakes scatter.** On the unshifted bank, pooled over seeds, less than half of M1's wrong decisions
+fall in orbits where all 16 rotations agree. *Wrong if* the share is 0.5 or more. *Confidence:* moderate.
+
+**H6b, the vote fixes what the certificate sees.** On the unshifted bank, pooled over seeds, the orbit vote removes at
+least half as many wrong decisions as the certificate counts, for both M1 and M2. *Wrong if* the ratio is below 0.5
+for either. *Confidence:* moderate; the vote averages returns rather than counting choices.
