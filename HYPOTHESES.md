@@ -205,4 +205,42 @@ across rotations. Now each situation gets one draw, rotated with it. Under noise
 model's own error at the states it observes, since that is all a label-free check can see; the observation error
 itself is outside the audit. Only the 15 input-noise evaluations were rerun. The first results under noise (the vote
 cutting wrong decisions from 1.4% to 0.4%, and certificate coverage near 1 for every model, M3 included) are kept in
-the README for comparison. No prediction was changed.
+the README for comparison, and in `results/learned.parquet` at commit 09428e3. No prediction was changed. The
+per-copy draws also broke a premise of the split: the points μ is measured on were no longer the same from every
+rotation, so the orthogonal pieces of the visible fraction weren't guaranteed. One rotated draw restores that.
+
+**What the fix should give.** Written while the rerun was running, before its results were seen. I only committed
+it after the results came back, though, so there is no timestamp to prove the order.
+
+- **M3 under noise** makes the same choice in all 16 copies of every situation, so its consistent share is 1 and its
+  certificate 0, apart from exact ties. This is an identity, so it also checks the fix.
+- **The orbit vote** gains almost nothing for any model under noise: rotating one observation adds no new
+  information. For M3 the gain is exactly zero.
+- **M1's and M2's mistakes under noise** come mostly as whole orbits: consistent share above 0.5.
+- **The visible fraction under noise** now describes the model's own error at what it observes, so it should look
+  like the unshifted bank's (0.5 to 0.6 for M1 and M2), while the signals' AUROCs fall towards chance. The error that
+  causes these mistakes, the observation error, is outside the audit.
+
+## Positive control, 2026-10-05
+
+Written before this run, and committed before starting it, but after the noise rerun had made H3 fail. So far the
+learned results only show the signals failing; this test is meant to show them working where they should.
+
+Each situation is moved 2.5 or 5 units from the origin before it's rotated, so its 16 copies sit on a circle around
+the origin. The true physics only depends on where the discs are relative to each other, so it doesn't change, and
+neither does M3, which only sees relative quantities. M1 and M2 read absolute coordinates, and the far copies sit
+where they never trained (training positions reach about 3 to 4 units out). Their error there should break rotation,
+which the audit can see. This is a covariate shift (unfamiliar inputs, same physics), while the physics shifts were
+concept shifts (familiar inputs, new physics).
+
+- **H7a, check.** The truth's returns match the unshifted bank's to 10⁻⁹, and M3 makes the same number of mistakes
+  as on the unshifted bank.
+- **H7b.** Pooled over M1 and M2, the symmetry signal's AUROC is above 0.7 at each offset. *Wrong if* 0.7 or below.
+- **H7c.** Less than half of M1's and M2's wrong decisions fall in orbits where all 16 copies agree. *Wrong if* 0.5
+  or more.
+- **H7d.** M1c and M2c make fewer wrong decisions than M1 and M2, with an interval below zero. *Wrong if* it contains
+  zero or lies above it.
+- **H7e.** The ensemble's AUROC is higher than under the physics shifts (0.50 and 0.56).
+
+*Confidence:* moderate for H7b and H7c, low for H7d: far from the data, M1's symmetric error may be large too, and the
+correction can't remove that. These runs are not added to H3, which stays on the five shifts it was written for.

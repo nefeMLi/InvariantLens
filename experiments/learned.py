@@ -40,6 +40,8 @@ SHIFTS = {
     "speed x 2": {"speed": 2 * SPEED},
     "input noise": {},  # the unshifted bank, seen through noisy inputs
 }
+CONTROLS = {"far 2.5": {"shift": 2.5}, "far 5": {"shift": 5.0}}  # H7: same physics, scene moved away from the origin
+ALL = SHIFTS | CONTROLS  # H3 stays on SHIFTS
 MODELS = ROOT / "results" / "models"
 DONE = ROOT / "results" / "learned"  # one file per finished evaluation; delete the folder after changing the code
 COLUMNS = ("wrong", "consistent", "visible", "auroc_symmetry", "auroc_balance", "auroc_ensemble", "coverage")
@@ -172,7 +174,7 @@ def report(rows) -> None:
     print("\nLearned models, mean over seeds")
     extra = ("C16 disagreement", "SO(2) disagreement", "C16 defect", "SO(2) defect")
     for kind in sorted({r["kind"] for r in rows}):
-        for shift in [*SHIFTS, "SO(2)"]:
+        for shift in [*ALL, "SO(2)"]:
             mine = [r for r in rows if r["kind"] == kind and r["shift"] == shift]
             keys = [k for k in (*COLUMNS, *extra) if mine and mine[0].get(k) is not None]
             if keys:
@@ -194,7 +196,7 @@ def report(rows) -> None:
                 rho, lo, hi = bootstrap(clusters, spearman)
                 print(f"   {name:6} {rho:+.2f} [{lo:+.2f}, {hi:+.2f}]")
     for kind in ("M1", "M2"):
-        for shift in SHIFTS:
+        for shift in ALL:
             before = mean_of(rows, kind, shift, "by_situation") / 16
             for name in (f"{kind}c", f"{kind} vote"):
                 change, lo, hi = bootstrap(mean_of(rows, name, shift, "by_situation") / 16 - before)
@@ -227,6 +229,16 @@ def report(rows) -> None:
             f"{kind} rotation-breaking share of one-step error by seed, no shift: "
             + " ".join(f"{x:.3f}" for x in breaking)
         )
+    for shift in CONTROLS:
+        far = [r for r in rows if r["kind"] in ("M1", "M2") and r["shift"] == shift]
+        auc = np.nanmean([r["auroc_symmetry"] for r in far])
+        mistakes = np.float64(sum(r["n_wrong"] for r in far))  # float, so no mistakes at all gives nan, not an error
+        consistent = sum(r["consistent"] * r["n_wrong"] for r in far if r["n_wrong"]) / mistakes
+        m3 = [sum(r["n_wrong"] for r in rows if r["kind"] == "M3" and r["shift"] == s) for s in (shift, "none")]
+        print(
+            f"H7 {shift}: M1 and M2 symmetry AUROC {auc:.2f} (above 0.7 predicted), consistent share {consistent:.2f}"
+            f" (below 0.5 predicted); M3 wrong decisions {m3[0]} against {m3[1]} unshifted (equal expected)"
+        )
 
 
 def area(n_wrong):
@@ -250,7 +262,7 @@ def plot(rows) -> None:
     left.axhline(0.5, color="black", lw=1, ls=":")
     left.set(xlabel="visible fraction of one-step error", ylabel="AUROC for wrong decisions")
     left.legend(frameon=False, fontsize=8, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.15))
-    x = np.arange(len(SHIFTS))
+    x = np.arange(len(ALL))
     for offset, kind in ((-0.15, "M1"), (0.15, "M2")):
         # the model as a large hollow circle, so the corrected model and the vote stay visible where they are equal
         for name, marker, style in (
@@ -258,9 +270,9 @@ def plot(rows) -> None:
             (f"{kind}c", "s", {"s": 22, "c": colours[kind]}),
             (f"{kind} vote", "^", {"s": 22, "c": colours[kind]}),
         ):
-            rate = [mean_of(rows, name, shift, "wrong") for shift in SHIFTS]
+            rate = [mean_of(rows, name, shift, "wrong") for shift in ALL]
             right.scatter(x + offset, rate, marker=marker, label=name, **style)
-    right.set_xticks(x, list(SHIFTS))
+    right.set_xticks(x, list(ALL), rotation=30)
     right.set(ylabel="wrong-decision rate")
     right.legend(frameon=False, fontsize=8, ncol=2)
     fig.suptitle("What the label-free signals see, and what correcting the visible error buys")
@@ -274,17 +286,17 @@ def run(situations, device, workers):
     spawn = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(workers, spawn, initializer=torch.set_num_threads, initargs=(1,)) as pool:
         trained = {(kind, seed): pool.submit(fit, kind, seed) for kind in KINDS for seed in SEEDS}
-        built = {
-            shift: pool.submit(make_bank, situations, **kw) for shift, kw in SHIFTS.items() if shift != "input noise"
-        }
+        built = {shift: pool.submit(make_bank, situations, **kw) for shift, kw in ALL.items() if shift != "input noise"}
         banks = {shift: job.result() for shift, job in built.items()} | {"input noise": built["none"].result()}
         for bank in banks.values():
             check_truth(bank)
-        mus = {shift: visited(bank, SHIFTS[shift].get("truth", step)) for shift, bank in banks.items()}
+        for shift in CONTROLS:  # H7a: moving the scene changes nothing the physics can see
+            assert np.allclose(banks[shift].returns, banks["none"].returns, rtol=1e-9, atol=0), "the truth moved"
+        mus = {shift: visited(bank, ALL[shift].get("truth", step)) for shift, bank in banks.items()}
         jobs = {}
         for (kind, seed), done in trained.items():
             done.result()
-            for shift in SHIFTS:
+            for shift in ALL:
                 task = kind, seed, shift, banks[shift], mus[shift], device
                 jobs[kind, seed, shift] = pool.submit(kept, evaluate, f"{kind}_{seed}_{shift}", *task)
             task = kind, seed, banks["none"], mus["none"], device

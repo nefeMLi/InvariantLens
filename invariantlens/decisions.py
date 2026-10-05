@@ -13,8 +13,9 @@ SPREAD = 0.6  # sd of the candidates' heading offset; the one knob the go/no-go 
 MARGIN = 0.05
 
 
-def situation(seed, speed=SPEED, spread=SPREAD):
-    """A start state, a goal ahead of the target, and five candidate pushes, all drawn the same way."""
+def situation(seed, speed=SPEED, spread=SPREAD, shift=0.0):
+    """A start state, a goal ahead of the target, and five candidate pushes, all drawn the same way. The whole scene
+    can be moved `shift` units along x, which the physics can't tell apart."""
     rng = np.random.default_rng(seed)
     s = initial_state(rng, speed)
     d = s[0, 1] - s[0, 0]
@@ -23,7 +24,8 @@ def situation(seed, speed=SPEED, spread=SPREAD):
     offset, amplitude = rng.normal(0, spread, (5, 1)), rng.uniform(0, 0.5, (5, 1))
     phase, force = rng.uniform(0, 2 * np.pi, (5, 1)), rng.uniform(0.5, 1.0, (5, 1)) * A_MAX
     angle = heading + offset + amplitude * np.sin(2 * np.pi * np.arange(HORIZON) / HORIZON + phase)
-    return s, goal, polar(force, angle)
+    s[0] += (shift, 0.0)
+    return s, goal + (shift, 0.0), polar(force, angle)
 
 
 def rollout(model, s, actions):
@@ -51,11 +53,11 @@ class Bank:
     best: np.ndarray  # (n,) true best candidate of the unrotated situation
 
 
-def make_bank(size=500, truth=step, speed=SPEED, spread=SPREAD):
+def make_bank(size=500, truth=step, speed=SPEED, spread=SPREAD, shift=0.0):
     """The first `size` seeds whose best push beats the runner-up by the margin, each in all 16 rotations."""
     seeds, kept = [], []
     for seed in count():
-        s, goal, actions = situation(seed, speed, spread)
+        s, goal, actions = situation(seed, speed, spread, shift)
         second, first = np.sort(reward(rollout(truth, s, actions), goal))[-2:]
         if (first - second) / max(abs(first), 1e-3) > MARGIN:
             seeds.append(seed)
