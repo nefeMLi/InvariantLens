@@ -28,8 +28,7 @@ ROTATIONS = rotation(2 * np.pi * np.arange(16) / 16)  # C16, acting on every tra
 
 
 def initial_state(rng, speed=SPEED):
-    """(2, N, 2) positions and velocities: target and distractors uniform within radius 2, agent 1 to 1.5 from the
-    target, every pair at least 0.8 apart."""
+    """Positions and velocities, (2, N, 2): the agent 1 to 1.5 from the target, every pair at least 0.8 apart."""
     while True:
         x = uniform_disc(rng, 2.0, N - 1)
         x = np.vstack([x[0] + polar(rng.uniform(1.0, 1.5), rng.uniform(0, 2 * np.pi)), x])
@@ -38,7 +37,7 @@ def initial_state(rng, speed=SPEED):
 
 
 def forces(x, v, depth, damping):
-    """Net Morse force on each disc plus central damping on relative velocity; equal and opposite within each pair."""
+    """Force on each disc: Morse attraction and repulsion, plus damping along the line between each pair."""
     d = x[..., :, None, :] - x[..., None, :, :]
     r = np.linalg.norm(d, axis=-1) + np.where(np.eye(N, dtype=bool), np.inf, 0.0)
     u = d / r[..., None]
@@ -50,7 +49,7 @@ def forces(x, v, depth, damping):
 
 
 def step(s, a, depth=DEPTH, damping=0.0):
-    """State after one decision step of velocity Verlet, force a on the agent; damping sees the half-step velocity."""
+    """One decision step of velocity Verlet with the push a on the agent; damping uses the half-step velocity."""
     x, v = s[..., 0, :, :], s[..., 1, :, :]
     push = np.where(np.arange(N)[:, None] == 0, a[..., None, :], 0.0)
     f = forces(x, v, depth, damping)
@@ -68,6 +67,6 @@ def totals(s):
 
 
 def balance(s, a):
-    """Totals one decision step later, as the balance laws fix them: X + DT P + DT^2/2 a and P + DT a."""
+    """Total position and momentum one decision step later, as the balance laws fix them."""
     x, p = np.unstack(totals(s), axis=-2)
     return np.stack([x + DT * p + DT**2 / 2 * a, p + DT * a], -2)

@@ -14,8 +14,7 @@ MARGIN = 0.05
 
 
 def situation(seed, speed=SPEED, spread=SPREAD):
-    """State, goal and five candidate pushes (5, HORIZON, 2), all drawn alike: force U[0.5, 1] a_max along a heading
-    that wobbles around the agent-to-target direction."""
+    """A start state, a goal ahead of the target, and five candidate pushes, all drawn the same way."""
     rng = np.random.default_rng(seed)
     s = initial_state(rng, speed)
     d = s[0, 1] - s[0, 0]
@@ -53,7 +52,7 @@ class Bank:
 
 
 def make_bank(size=500, truth=step, speed=SPEED, spread=SPREAD):
-    """The first `size` seeds whose true best candidate beats the runner-up by the relative margin."""
+    """The first `size` seeds whose best push beats the runner-up by the margin, each in all 16 rotations."""
     seeds, kept = [], []
     for seed in count():
         s, goal, actions = situation(seed, speed, spread)

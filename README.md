@@ -51,9 +51,13 @@ whole orbits. Once all of the error is visible, the label-free check counts esse
 
 **Error that only breaks the momentum rules is less harmful.** With the second kind of visible error, decisions get
 better as more error moves into it: at 10% error the wrong-decision rate falls from 26.5% to 21.0% (slope −0.056
-[−0.074, −0.035]), and at 3% from 2.8% to 2.2%. My guess at why, which I haven't tested: this kind of error shifts
-every disc by the same amount. That barely changes the forces between them, and it shifts all five candidates'
-outcomes alike, so it mostly cancels when the agent compares them.
+[−0.074, −0.035]), and at 3% from 2.8% to 2.2%. The likely reason comes from the physics. This kind of error moves
+every disc by the same position and velocity offset, and the forces here depend only on where the discs are relative
+to each other. So it's like watching the scene from a slightly moving viewpoint: the collisions that decide which
+push works best don't change, and only the target's absolute position does. The invisible error has no such shared
+offset, so all of it goes into the relative motion that collisions depend on. I haven't tested this explanation
+directly, and it's specific to this system: breaking a conservation law can do real harm elsewhere, for example
+when energy slowly creeps up over a long rollout.
 
 ![Equal one-step error, moved from invisible to visible](figures/controlled.svg)
 
@@ -67,8 +71,12 @@ above chance. The ensemble does no better (0.50 and 0.56), because all five copi
 
 **Where there is visible error, the signals do follow it.** Across models, copies and conditions, a signal is better
 at flagging wrong decisions when more of the model's error is visible: Spearman +0.68 [+0.62, +0.73] for the rotation
-signal and +0.58 [+0.50, +0.67] for the momentum signal. The catch is in the figure. Point size shows how many wrong
-decisions each score rests on, and the highest scores rest on one or two.
+signal and +0.58 [+0.50, +0.67] for the momentum signal. This is weaker evidence than it looks. Most of the
+correlation comes from the difference between conditions: under the physics changes the visible share is near zero
+and the scores near chance, which is the previous finding again. The highest scores rest on one or two wrong
+decisions each (point size in the figure shows how many). The clearest single case is M3: its only visible error
+is momentum error, and the momentum signal flags its mistakes with an AUROC of 0.93, from about 22 mistakes per
+model.
 
 ![What the label-free signals see, and what correcting the visible error buys](figures/learned.svg)
 
@@ -77,8 +85,11 @@ and make no wrong decisions at all on the original situations, or with faster st
 made a handful of mistakes there to begin with, so the improvement (−0.01% [−0.05%, +0.00%]) doesn't clear the bar I
 set in advance. Under the physics changes, where the mistakes actually are, the correction changes nothing, because
 there is nothing visible to remove. Averaging the model's predictions over the 16 rotations before choosing does the
-same, except under input noise. There it averages 16 differently noised views of the scene and cuts wrong decisions
-from 1.4% to 0.4%.
+same. Under input noise it cuts wrong decisions from 1.4% to 0.4%, but that's an artifact of my setup, not something
+a real agent could do: each of the 16 rotated copies got its own noise, so the vote averages 16 separate noisy
+observations. A real agent has one observation, and rotating it gives the same noise turned around, with nothing
+new to average. The same artifact explains why even M3, which is exactly symmetric, disagrees across rotations
+under noise, and why the visible share there (94%) measures noise rather than model error.
 
 **The check works beyond its 16 angles.** At 100 random angles, decisions disagree and the error breaks rotation
 about as often as at the 16 checked ones, and M3 stays exactly symmetric at all of them.
@@ -93,8 +104,10 @@ about as often as at the 16 checked ones, and M3 stays exactly symmetric at all 
 - I expected removing the visible error to remove wrong decisions. It removes every one it can reach, but on the
   original situations there were almost none, and under the physics changes the errors that count are the ones it
   can't see.
-- I expected training on rotated data (M2) to cut the part of the error that breaks rotation. It came out at 38 to
-  58% of the one-step error, against 50 to 61% for M1.
+- I expected training on rotated data (M2) to cut the part of the error that breaks rotation. As a share of the
+  one-step error it didn't: 38 to 58% for M2, against 50 to 61% for M1. That share can stay put even if training
+  shrinks the rotation-breaking error in absolute terms, as long as the rest shrinks too, so this isn't evidence
+  that the augmentation failed. Comparing the absolute size would settle it.
 - My first version of the input-noise test added fresh noise at every step of the model's own predictions, which
   swamped all the models into identical decisions. I moved the noise to what the model observes at the start, before
   the full run.
@@ -120,7 +133,12 @@ I tried to be honest about these. Some are limits of the setup, some are limits 
   trained models' mistakes are spread were written after the first experiment and a small code test. They are marked
   as such in HYPOTHESES.md, but they deserve less weight than the original ones.
 - **The controlled errors are random smooth fields.** Real model errors can look different.
-- **The explanation for the balance-only result is untested.** It fits, but I haven't checked it directly.
+- **The explanation for the balance-only result is untested.** It follows from the physics, but I haven't checked
+  it directly, for example by measuring how much the error changes the collisions.
+- **The input-noise test isn't realistic for the orbit vote.** Each rotated copy got separate noise, which a real
+  agent with one observation wouldn't have. The vote's gain there, and the certificate's coverage, come from that.
+- **The correlation between visible share and signal quality is mostly between conditions.** Within a single
+  condition there are too few mistakes on the original bank to say much.
 - **Only part of the symmetry is checked.** The check covers 16 rotations, not every angle (random angles behave the
   same, but without a guarantee), and only two conservation laws, which need open space and equal, known masses.
 - **M3 differs from M1 in more than symmetry.** Its outputs can only point along the gaps between discs, its own

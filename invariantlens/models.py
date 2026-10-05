@@ -18,10 +18,8 @@ def mlp(n_in, width):
 
 
 class Net(nn.Module):
-    """Message passing over all disc pairs, predicting (dx, dv) for every disc over one decision step.
-    Plain: absolute coordinates go in and a linear head reads (dx, dv) off each disc.
-    Equivariant: only invariants go in, and (dx, dv) are relative positions, velocities and the push weighted by
-    learned scalars. Pair weights depend on the ordered pair, so momentum is not conserved by construction."""
+    """Message passing over all pairs of discs, predicting each disc's (dx, dv) over one decision step. The
+    equivariant version only sees things that don't change under rotation, so it turns with the scene exactly."""
 
     def __init__(self, equivariant, scale, width=64, layers=3):
         super().__init__()
@@ -73,7 +71,7 @@ def transitions(n, seed):
 
 
 def train(kind, seed, data, validation, epochs=EPOCHS):
-    """One model trained on one-step MSE in scaled units, in float32; the epoch with the best validation MSE is kept."""
+    """Train one model on one-step MSE in float32, keeping the epoch with the lowest validation loss."""
     torch.manual_seed(seed)
     torch.set_num_threads(1)
     s, a, s1 = (torch.from_numpy(x).float() for x in data)
@@ -108,7 +106,7 @@ def train(kind, seed, data, validation, epochs=EPOCHS):
 
 
 def world_model(net, device="cpu"):
-    """The trained network as a float64 step map on numpy arrays, like physics.step; it runs on device."""
+    """The network as a float64 step function on numpy arrays, like physics.step."""
     net = copy.deepcopy(net).double().eval().to(device)
     chunk = 4096 if torch.device(device).type == "cpu" else 16384
 

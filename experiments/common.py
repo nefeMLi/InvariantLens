@@ -27,7 +27,7 @@ def check_truth(bank) -> None:
 
 
 def visited(bank, truth=step):
-    """(s, a, F(s, a)) along every true candidate rollout, unrotated; mu is (s, a) with its 16 rotations."""
+    """(s, a, F(s, a)) along every true candidate rollout, unrotated; mu is (s, a) in all 16 rotations."""
     states = rollout(truth, bank.state[:, 0], bank.actions[:, 0])
     s, s1 = (x.reshape(-1, *states.shape[-3:]) for x in (states[..., :-1, :, :, :], states[..., 1:, :, :, :]))
     return s, bank.actions[:, 0].reshape(-1, 2), s1
@@ -64,8 +64,7 @@ def score(choices, bank) -> dict:
 
 
 def auroc(signal, wrong) -> float:
-    """P(the signal is higher on a wrong decision than on a right one), ties counting half. Undefined (nan) for a
-    signal that is zero everywhere, or when no decision or every decision is wrong."""
+    """How often a wrong decision gets a higher signal than a right one (ties count half); nan if undefined."""
     signal, wrong = np.ravel(signal), np.ravel(wrong)
     n = int(wrong.sum())
     if signal.max() < 1e-12 or n in (0, wrong.size):
@@ -80,8 +79,7 @@ def slope(x, y) -> float:
 
 
 def bootstrap(values, statistic=np.mean, seed=0) -> tuple[float, float, float]:
-    """statistic of the rows of values, with a 95% percentile interval from resampling the rows, each one cluster.
-    Rows with no finite value are dropped; a statistic over rows of several values handles the rest itself."""
+    """The statistic over the rows of values, with a 95% interval from resampling rows; all-nan rows are dropped."""
     v = np.asarray(values, float)
     v = v[np.isfinite(v).reshape(len(v), -1).any(-1)]
     if not len(v):
@@ -97,7 +95,7 @@ def parallel(fn, tasks):
 
 
 def write_results(rows: list[dict], name: str) -> None:
-    """results/<name>.parquet; rows may have different keys, and a missing one is stored as null."""
+    """Save rows to results/<name>.parquet; a key a row doesn't have is stored as null."""
     (ROOT / "results").mkdir(exist_ok=True)
     keys = list(dict.fromkeys(key for row in rows for key in row))
     pq.write_table(

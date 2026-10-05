@@ -21,7 +21,7 @@ def average(f):
 
 
 def fix(y, target=0.0):
-    """Shift every disc's position and velocity by the same amounts so the totals of y equal target; I - M on errors."""
+    """Shift every disc by the same amounts so the totals of y equal target. With target 0 this is I - M."""
     return y - (totals(y) - target)[..., :, None, :] / N
 
 
@@ -31,15 +31,14 @@ def invisible(e):
 
 
 def corrected(model):
-    """P_G(F^ - Me): the model with its balance fixed, then averaged over rotations. Its error is invisible(e)."""
+    """The model with its balance fixed, then averaged over the 16 rotations. Its error is the invisible part."""
     return average(lambda s, a: fix(model(s, a), balance(s, a)))
 
 
 def signals(model, s, a):
-    """Symmetry signal |S F^| and balance signal |totals(F^) - balance| at each (s, a); neither needs the truth.
-    The first of the 16 rotations is the identity, so F^(s, a) itself comes with the average."""
+    """The symmetry and balance signals at each (s, a), from the model alone."""
     ys = model(rotate(s), rotate(a))
-    y = ys[0]
+    y = ys[0]  # rotation 0 is the identity, so this is the model's own answer
     d, r = y - unrotate(ys), totals(y) - balance(s, a)
     return np.sqrt(np.square(d).sum((-3, -2, -1))), np.sqrt(np.square(r).sum((-2, -1)))
 

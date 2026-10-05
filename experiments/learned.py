@@ -70,18 +70,15 @@ def load(kind, seed, device):
     return world_model(net, device)
 
 
-def sensor(shift):
-    """What a model is shown of a real state: the state, or under the input-noise shift the state plus isotropic noise.
-    The draws are the same for every model, so the members of the ensemble see the same thing."""
-    rng = np.random.default_rng(0)
-    return (lambda s: s + NOISE * rng.normal(size=s.shape)) if shift == "input noise" else (lambda s: s)
+def noise(shift, shape, seed=0):
+    """Isotropic sensor noise, one draw per observation and the same for every model; zero without the noise shift."""
+    return NOISE * np.random.default_rng(seed).normal(size=shape) if shift == "input noise" else np.zeros(shape)
 
 
-def fractions(model, mu, sense):
-    """The visible fraction of the one-step error under mu and its three pieces, from one evaluation at the rotated
-    points. Equivariant parts have the same norm at every rotation, so their norms come from averages at the base."""
+def fractions(model, mu):
+    """The visible share of the one-step error under mu and its three pieces, from one pass over the rotated points."""
     s, a, s1 = map(rotate, mu)
-    y = model(sense(s), a)
+    y = model(s, a)
     e, me = y - s1, y - fix(y, balance(s, a))
     whole, pe, pm = mean_square(e), unrotate(e), unrotate(me)
     both = mean_square(me) - mean_square(pm)
@@ -95,10 +92,10 @@ def fractions(model, mu, sense):
 
 
 def evaluate(kind, seed, shift, bank, mu, device):
-    """One trained model under one shift: its decisions, both signals along its own rollouts and their AUROC for
-    wrong decisions, and its visible fraction; for M1 and M2 also the corrected model."""
-    model, sense = load(kind, seed, device), sensor(shift)
-    seen = replace(bank, state=sense(bank.state))  # only the real starting state is sensed; rollouts are not re-noised
+    """One model under one shift: its decisions, signals, AUROCs and visible share, and for M1 and M2 the correction."""
+    model = load(kind, seed, device)
+    # one noisy observation per situation, turned with each rotated copy; the model's own rollouts aren't noised again
+    seen = replace(bank, state=bank.state + np.moveaxis(rotate(noise(shift, bank.state[:, 0].shape)), 0, 1))
     returns, found = [], []
     for p in chunks(seen):
         states = rollout(model, seen.state[p], seen.actions[p])
@@ -107,10 +104,14 @@ def evaluate(kind, seed, shift, bank, mu, device):
     returns = np.concatenate(returns)
     (sym, bal), choices = map(np.concatenate, zip(*found)), returns.argmax(-1)
     wrong, unit = choices != bank.best[:, None], {"kind": kind, "seed": seed, "shift": shift}
+    if shift == "input noise":  # the audit only sees the model's error at the states it observes
+        s, a, _ = mu
+        s = s + noise(shift, s.shape, seed=1)
+        mu = s, a, step(s, a)
     rows = [
         unit
         | score(choices, bank)
-        | fractions(model, mu, sense)
+        | fractions(model, mu)
         | {"auroc_symmetry": auroc(sym, wrong), "auroc_balance": auroc(bal, wrong)}
     ]
     if kind != "M3":
@@ -137,8 +138,7 @@ def pooled(banks, returns):
 
 
 def continuous(kind, seed, bank, mu, device, angles=100, points=2000):
-    """H5: how often decisions disagree across rotated copies, and the one-step defect, over 100 random continuous
-    angles beside the 16 audit angles."""
+    """H5: decision disagreement and one-step defect at 100 random angles, next to the 16 audit angles."""
     model, s, a = load(kind, seed, device), mu[0][:points], mu[1][:points]
     y, row = model(s, a), {"kind": kind, "seed": seed, "shift": "SO(2)"}
     for name, R in {
@@ -268,9 +268,8 @@ def plot(rows) -> None:
 
 
 def run(situations, device, workers):
-    """Train the models not yet saved and evaluate each model as soon as it is trained, so that evaluation of the
-    finished models fills the cores the last trainings leave free. Evaluations finished by an earlier run are loaded.
-    Training always runs on the CPU in float32; evaluation runs on device in float64."""
+    """Train what isn't saved yet and evaluate each model as soon as it's ready, reusing finished jobs. Training runs
+    on the CPU in float32; evaluation runs on device in float64."""
     # one core per worker; spawned, not forked: CUDA cannot start in a forked process (the Linux default before 3.14)
     spawn = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(workers, spawn, initializer=torch.set_num_threads, initargs=(1,)) as pool:

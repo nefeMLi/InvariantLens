@@ -135,7 +135,7 @@ No retraining; each shift gets its own bank with the same seeds and acceptance r
 | D × 1.5 | yes | yes | the shift's own error is invisible |
 | Pair damping −c((vᵢ − vⱼ)·r̂ᵢⱼ) r̂ᵢⱼ, c = 0.5, half-step velocity | yes | yes | same |
 | Initial speeds × 2 | no | – | extrapolation; the visible part may grow |
-| Input noise σ = 0.02 on the observed starting state only (changed 2026-10-04) | no | – | measured |
+| Input noise σ = 0.02 on the observed starting state only (changed 2026-10-04, fixed 2026-10-05) | no | – | measured |
 
 Masses are never shifted. Go/no-go: before training, run the continuum at ε = 3%; if the wrong-decision rate is below
 2% or above 80% at every α, change the spread of δ_k once, on the true simulator only. If time runs short, cut the
@@ -194,3 +194,15 @@ fall in orbits where all 16 rotations agree. *Wrong if* the share is 0.5 or more
 **H6b, the vote fixes what the certificate sees.** On the unshifted bank, pooled over seeds, the orbit vote removes at
 least half as many wrong decisions as the certificate counts, for both M1 and M2. *Wrong if* the ratio is below 0.5
 for either. *Confidence:* moderate; the vote averages returns rather than counting choices.
+
+## After the learned results, 2026-10-05
+
+**Input-noise fix.** Found after the learned results were in, while checking why the orbit vote helped so much under
+input noise. The 2026-10-04 version drew separate noise for each of the 16 rotated copies of a situation. But the vote
+and the certificate are meant to work from one observation, turned 16 ways, so the copies should share one draw,
+rotated with the scene. With separate draws the vote was averaging 16 independent observations, and even M3 disagreed
+across rotations. Now each situation gets one draw, rotated with it. Under noise, the visible fraction is now the
+model's own error at the states it observes, since that is all a label-free check can see; the observation error
+itself is outside the audit. Only the 15 input-noise evaluations were rerun. The first results under noise (the vote
+cutting wrong decisions from 1.4% to 0.4%, and certificate coverage near 1 for every model, M3 included) are kept in
+the README for comparison. No prediction was changed.

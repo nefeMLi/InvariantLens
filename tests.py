@@ -1,5 +1,4 @@
-"""The checks from HYPOTHESES.md that need no trained model: truth, projections, invisible control, injection,
-correction, M3."""
+"""The checks from HYPOTHESES.md that need no trained model."""
 
 from functools import partial
 

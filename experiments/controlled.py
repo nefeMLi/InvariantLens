@@ -42,16 +42,15 @@ def fourier_field(seed):
 
 
 def continuum(draw, mu, field="visible"):
-    """alpha -> e_alpha = sqrt(1 - alpha^2) u + alpha w with u, w of unit norm under mu, and |Sw|^2 / |w|^2.
-    w is V r2, or for the balance field (I - S)M r2 = V P_G r2, which rotates correctly.
-    Equivariant fields have the same norm at every rotation, so only |r2|^2 needs the rotated points."""
+    """For one draw, alpha -> e_alpha = sqrt(1 - alpha^2) u + alpha w with u and w of unit norm under mu, and w's
+    rotation-breaking share. For the balance field, w = (I - S)M r2, which turns with the scene."""
     s, a = mu
     r1, r2 = fourier_field(2 * draw), fourier_field(2 * draw + 1)
     if field == "balance":
         r = average(r2)
         whole = symmetric = mean_square(r(s, a))
     else:
-        r = r2
+        r = r2  # only r2 itself needs the rotated points; the other fields have the same norm at every rotation
         whole, symmetric = mean_square(r2(rotate(s), rotate(a))), mean_square(average(r2)(s, a))
     hidden = mean_square(invisible(r2)(s, a))  # (I - V) P_G = I - V, so this is the same for both fields
     nu, nw = np.sqrt(mean_square(invisible(r1)(s, a))), np.sqrt(whole - hidden)
@@ -65,8 +64,7 @@ def continuum(draw, mu, field="visible"):
 
 
 def check_injection(mu, m=100):
-    """The injection gate on m points of mu and their rotations, for both fields: |V e_alpha|^2 = alpha^2, the
-    orbit-averaged defect equals twice the orbit mean of |S e|^2, and the balance field breaks no rotation."""
+    """The injection check from HYPOTHESES.md, on m points of mu and their rotations, for both fields."""
     base = tuple(x[:m] for x in mu)
     s, a = map(rotate, base)
     for field in FIELDS:
@@ -104,6 +102,8 @@ def table(rows, key):
 def report(rows) -> None:
     for field in FIELDS:
         print(f"\nControlled continuum, {field} field")
+        share = np.mean([r["sym_share"] for r in rows if r["field"] == field and r["alpha"] == 1])
+        print(f"  rotation-breaking share of the visible part: {share:.1%}")
         for eps in sorted({r["eps"] for r in rows if r["field"] == field}):
             mine = [r for r in rows if r["field"] == field and r["eps"] == eps]
             rates = " ".join(f"{np.mean([r['wrong'] for r in mine if r['alpha'] == alpha]):.1%}" for alpha in ALPHAS)
@@ -118,8 +118,8 @@ def report(rows) -> None:
 
 
 def plot(rows) -> None:
-    """Visible field: every draw in grey and the mean in blue. Balance field: its mean wrong-decision rate in orange;
-    its mistakes always come as whole orbits, so the other two rows would be flat."""
+    """Blue: the visible field, with every draw in grey. Orange: the balance field's wrong-decision rate only, since
+    its mistakes always come as whole orbits."""
     epsilons = sorted({r["eps"] for r in rows})
     fig, axes = plt.subplots(3, len(epsilons), figsize=(3.4 * len(epsilons), 8), sharex=True, layout="constrained")
     axes = np.asarray(axes).reshape(3, -1)
