@@ -244,3 +244,11 @@ concept shifts (familiar inputs, new physics).
 
 *Confidence:* moderate for H7b and H7c, low for H7d: far from the data, M1's symmetric error may be large too, and the
 correction can't remove that. These runs are not added to H3, which stays on the five shifts it was written for.
+
+**H7, made precise the same day, while the run was in progress and before any of its results were seen.**
+
+- In H7b, "pooled" means the mean of the 10 per-model AUROCs (M1 and M2, five seeds each), with a 95% bootstrap
+  interval over those 10 models. The 0.7 threshold applies to the mean.
+- H7e: *wrong if* the ensemble's AUROC is 0.56 or below (the highest it reached under the physics shifts) at either
+  offset.
+- If M1 and M2 make fewer than 100 wrong decisions in total at an offset, H7b and H7c count as inconclusive there.

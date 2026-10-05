@@ -231,13 +231,16 @@ def report(rows) -> None:
         )
     for shift in CONTROLS:
         far = [r for r in rows if r["kind"] in ("M1", "M2") and r["shift"] == shift]
-        auc = np.nanmean([r["auroc_symmetry"] for r in far])
+        auc, lo, hi = bootstrap([r["auroc_symmetry"] for r in far])  # mean over the 10 models, interval over models
         mistakes = np.float64(sum(r["n_wrong"] for r in far))  # float, so no mistakes at all gives nan, not an error
         consistent = sum(r["consistent"] * r["n_wrong"] for r in far if r["n_wrong"]) / mistakes
         m3 = [sum(r["n_wrong"] for r in rows if r["kind"] == "M3" and r["shift"] == s) for s in (shift, "none")]
+        verdict = "" if mistakes >= 100 else f"; only {mistakes:.0f} mistakes, so H7b and H7c are inconclusive"
         print(
-            f"H7 {shift}: M1 and M2 symmetry AUROC {auc:.2f} (above 0.7 predicted), consistent share {consistent:.2f}"
-            f" (below 0.5 predicted); M3 wrong decisions {m3[0]} against {m3[1]} unshifted (equal expected)"
+            f"H7 {shift}: M1 and M2 symmetry AUROC {auc:.2f} [{lo:.2f}, {hi:.2f}] (above 0.7 predicted), consistent"
+            f" share {consistent:.2f} (below 0.5 predicted){verdict}; M3 wrong decisions {m3[0]} against {m3[1]}"
+            f" unshifted (equal expected); ensemble AUROC {mean_of(rows, 'M4', shift, 'auroc_ensemble'):.2f} (above"
+            " 0.56 predicted)"
         )
 
 
