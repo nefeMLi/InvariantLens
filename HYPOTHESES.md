@@ -271,3 +271,9 @@ are inconclusive there and H7d failed. At 5 units (267 mistakes) H7b failed (AUR
 **Not pre-registered.** After all of this I looked at two label-free warnings I hadn't planned: the model's own
 predicted margin between its two best candidates, and a flag on copies that disagree with their orbit. They are
 computed by `experiments/posthoc.py` from the saved results and reported as exploratory.
+
+**Also not pre-registered: what the noise condition tests.** Given the same noisy readings, the true simulator makes
+128 wrong decisions, as many as M1 and M2 (128 to 135). So the mistakes under noise come from the observation, not
+the model, and that condition can't test H3. Without it, H3's Spearman is +0.72 [+0.59, +0.82] for the symmetry
+signal and +0.63 [+0.43, +0.81] for the balance signal. With far 5 in its place they are +0.11 [−0.13, +0.33] and
++0.42 [+0.27, +0.60]. H3 still counts as failed. Both checks are in `experiments/posthoc.py`.

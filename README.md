@@ -43,8 +43,9 @@ There are two experiments.
 
 **The short version.** A decision goes wrong when the error in the predicted gap between the two best pushes is
 bigger than the gap itself. The rule-based checks see the error, but only its visible part. The model's own margin
-between its two best pushes sees the gap. Under changes in the physics and under sensor noise, almost all of the error
-is invisible, so the rule-based checks see nothing, while the margin still points at the close calls. Far from the
+between its two best pushes sees the gap. Under changes in the physics almost all of the error is invisible, and under
+sensor noise the mistakes aren't even the model's, so the rule-based checks see nothing, while the margin still points
+at the close calls. Far from the
 training data, the error is visible but large everywhere, so its size says nothing about which decision will flip.
 There, comparing the rotated copies does: it finds most of the mistakes, and averaging over the copies fixes most of
 them. Rule-based checks tell you which part of the error you can remove, and the margin tells you which decisions are
@@ -80,9 +81,10 @@ still respects rotations and momentum adds only invisible error, and the measure
 is visible, 96 to 100% of the mistakes come as whole orbits, and the label-free bound catches at most 2% of them. The
 two signals score an AUROC of 0.57 to 0.59, barely above chance, and the ensemble 0.50 and 0.56. That last part fits
 what's known about ensembles: they notice unfamiliar inputs, not familiar inputs whose outcome has changed, and a new
-physics is the second kind. Noisy observations behave the same way. With one noisy reading per situation, the error it
-causes turns with the scene, so it is invisible too: the mistakes come as whole orbits, the signals score 0.54 to 0.60,
-and neither the correction nor the vote helps.
+physics is the second kind. Noisy observations look the same: the mistakes come as whole orbits, the signals score 0.54
+to 0.60, and neither the correction nor the vote helps. But I only noticed afterwards that the reason is different.
+Given the same noisy readings, the true simulator makes 128 wrong decisions, as many as M1 and M2 (128 to 135). These
+mistakes come from the observation, not the model, so no check on the model could find them.
 
 **Far from the training data, the error becomes visible, and comparing rotated copies works.** Moving every situation
 5 units from the origin changes nothing the true physics or M3 can see (M3 made 112 mistakes there, exactly as before).
@@ -119,7 +121,10 @@ decisions before and after the correction and the vote.*
 
 **The smaller results.** The visible share of a model's error does not explain how well the signals work (Spearman
 +0.06 [−0.12, +0.20] and +0.18 [−0.02, +0.39]), so that prediction failed. It looked supported at first, but the
-support came from a bug in how I added input noise. Removing the visible error removed every mistake it could reach
+support came from a bug in how I added input noise. The noisy condition doesn't belong in this test anyway, since its
+mistakes aren't the model's. Leaving it out gives +0.72 [+0.59, +0.82] and +0.63 [+0.43, +0.81], but putting the
+far-from-origin runs in its place brings the symmetry signal back to +0.11 [−0.13, +0.33], so the failure is real and
+not just down to the noise. Removing the visible error removed every mistake it could reach
 on the original situations, but there were only about 5 to remove, so that prediction failed too. The check carries
 over beyond its 16 angles: the error breaks rotation by the same amount at 100 random angles as at the 16 checked ones
 (4.9·10⁻⁵ for M1, 3.3·10⁻⁵ for M2). The two predictions about M1's mistakes on the original situations held (all
@@ -250,7 +255,7 @@ pip install -r requirements.txt
 pytest tests.py
 python -m experiments.controlled    # --eps 0.03 runs only the go/no-go size, --fields one kind of error
 python -m experiments.learned       # trains 15 models on the CPU, then evaluates them: the slow part
-python -m experiments.posthoc       # the unplanned margin and orbit-flag analysis, from the saved results
+python -m experiments.posthoc       # the unplanned analyses, from the saved results
 ```
 
 Run times: the controlled experiment took about 6.5 hours on 4 CPU cores. Training takes 3 to 4 hours per model on one

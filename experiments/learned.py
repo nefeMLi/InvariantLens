@@ -77,6 +77,11 @@ def noise(shift, shape, seed=0):
     return NOISE * np.random.default_rng(seed).normal(size=shape) if shift == "input noise" else np.zeros(shape)
 
 
+def observed(bank, shift):
+    """The bank as the models see it: one noisy observation per situation, turned with each rotated copy."""
+    return replace(bank, state=bank.state + np.moveaxis(rotate(noise(shift, bank.state[:, 0].shape)), 0, 1))
+
+
 def fractions(model, mu):
     """The visible share of the one-step error under mu and its three pieces, from one pass over the rotated points."""
     s, a, s1 = map(rotate, mu)
@@ -95,9 +100,7 @@ def fractions(model, mu):
 
 def evaluate(kind, seed, shift, bank, mu, device):
     """One model under one shift: its decisions, signals, AUROCs and visible share, and for M1 and M2 the correction."""
-    model = load(kind, seed, device)
-    # one noisy observation per situation, turned with each rotated copy; the model's own rollouts aren't noised again
-    seen = replace(bank, state=bank.state + np.moveaxis(rotate(noise(shift, bank.state[:, 0].shape)), 0, 1))
+    model, seen = load(kind, seed, device), observed(bank, shift)  # the model's own rollouts aren't noised again
     returns, found = [], []
     for p in chunks(seen):
         states = rollout(model, seen.state[p], seen.actions[p])
