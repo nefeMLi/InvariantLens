@@ -118,26 +118,23 @@ def report(rows) -> None:
 
 
 def plot(rows) -> None:
-    """Blue: the visible field, with every draw in grey. Orange: the balance field's wrong-decision rate only, since
-    its mistakes always come as whole orbits."""
     epsilons = sorted({r["eps"] for r in rows})
-    fig, axes = plt.subplots(3, len(epsilons), figsize=(3.4 * len(epsilons), 8), sharex=True, layout="constrained")
-    axes = np.asarray(axes).reshape(3, -1)
+    fig, axes = plt.subplots(
+        3, len(epsilons), figsize=(3.4 * len(epsilons), 8), sharex=True, layout="constrained", squeeze=False
+    )
     x = np.square(ALPHAS)
-    lines = {"visible": ("tab:blue", "visible part breaks rotation"), "balance": ("tab:orange", "balance check only")}
     for col, eps in enumerate(epsilons):
+        visible = [r for r in rows if r["field"] == "visible" and r["eps"] == eps]
+        balance = [r for r in rows if r["field"] == "balance" and r["eps"] == eps]
         for row, (key, label) in enumerate(OUTCOMES.items()):
-            ax = axes[row, col]
-            for field, (colour, name) in lines.items():
-                mine = [r for r in rows if r["field"] == field and r["eps"] == eps]
-                if mine and (field == "visible" or key == "wrong"):
-                    curves = table(mine, key)
-                    if field == "visible":
-                        ax.plot(x, curves.T, color="grey", lw=0.6, alpha=0.5)
-                    ax.plot(x, np.nanmean(curves, 0), "o-", color=colour, lw=2, ms=4, label=name)
-            ax.set(ylabel=label if col == 0 else None, title=f"error {eps:.0%}" if row == 0 else None)
+            curves = table(visible, key)
+            axes[row, col].plot(x, curves.T, color="grey", lw=0.6, alpha=0.5)
+            axes[row, col].plot(x, np.nanmean(curves, 0), "o-", label="visible part breaks rotation")
+            axes[row, col].set(ylabel=label if col == 0 else None, title=f"error {eps:.0%}" if row == 0 else None)
+        if balance:  # its mistakes always come as whole orbits, so only its wrong-decision rate is worth drawing
+            axes[0, col].plot(x, np.nanmean(table(balance, "wrong"), 0), "o-", label="balance check only")
         axes[-1, col].set_xlabel("visible share α²")
-    axes[0, 0].legend(frameon=False, fontsize=8)
+    axes[0, 0].legend(fontsize=8)
     fig.suptitle("Equal one-step error, moved from invisible to visible")
     save_figure(fig, "controlled")
 

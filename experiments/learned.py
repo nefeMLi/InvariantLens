@@ -209,7 +209,7 @@ def report(rows) -> None:
             removed = mean_of(rows, kind, shift, "visible")
             # both signals of the corrected model are zero on any input, so none of these can be flagged
             print(f"   visible error removed by the correction {removed:.1%}; {left} wrong decisions left after it")
-    # totals over the five seeds on the unshifted bank, as float64 so that an empty count gives nan, not an error
+    # totals over the five seeds on the unshifted bank; floats, so an empty count gives nan instead of an error
     mine = {kind: [r for r in rows if r["kind"] == kind and r["shift"] == "none"] for kind in ("M1", "M2")}
     wrong = {
         kind: np.float64(sum(r["n_wrong"] for r in rows if r["kind"] == kind and r["shift"] == "none"))
@@ -244,40 +244,29 @@ def report(rows) -> None:
         )
 
 
-def area(n_wrong):
-    """Marker area growing with the number of wrong decisions an AUROC rests on."""
-    return 6 + 2 * np.sqrt(n_wrong)
-
-
 def plot(rows) -> None:
-    fig, (left, right) = plt.subplots(1, 2, figsize=(11, 5), layout="constrained")
-    colours = dict(zip(KINDS, ("tab:blue", "tab:orange", "tab:green")))
+    fig, (left, right) = plt.subplots(1, 2, figsize=(11, 4.5), layout="constrained")
     for kind in KINDS:
         mine = [r for r in rows if r["kind"] == kind and r["shift"] in SHIFTS]
-        sizes = [area(r["n_wrong"]) for r in mine]
+        size = [6 + 2 * np.sqrt(r["n_wrong"]) for r in mine]  # bigger points rest on more mistakes
         for key, marker in (("auroc_symmetry", "o"), ("auroc_balance", "x")):
-            left.scatter([r["visible"] for r in mine], [r[key] for r in mine], c=colours[kind], marker=marker, s=sizes)
-        left.scatter([], [], c=colours[kind], label=kind)
-    left.scatter([], [], c="grey", marker="o", label="symmetry signal")
-    left.scatter([], [], c="grey", marker="x", label="balance signal")
-    for n in (1, 100, 1000):
-        left.scatter([], [], c="grey", s=area(n), label=f"{n} wrong decision{'s' * (n > 1)}")
+            if np.isfinite([r[key] for r in mine]).any():
+                left.scatter(
+                    [r["visible"] for r in mine],
+                    [r[key] for r in mine],
+                    s=size,
+                    marker=marker,
+                    label=f"{kind}, {key[6:]} signal",
+                )
     left.axhline(0.5, color="black", lw=1, ls=":")
     left.set(xlabel="visible fraction of one-step error", ylabel="AUROC for wrong decisions")
-    left.legend(frameon=False, fontsize=8, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.15))
+    left.legend(fontsize=8)
     x = np.arange(len(ALL))
-    for offset, kind in ((-0.15, "M1"), (0.15, "M2")):
-        # the model as a large hollow circle, so the corrected model and the vote stay visible where they are equal
-        for name, marker, style in (
-            (kind, "o", {"s": 110, "facecolors": "none", "edgecolors": colours[kind]}),
-            (f"{kind}c", "s", {"s": 22, "c": colours[kind]}),
-            (f"{kind} vote", "^", {"s": 22, "c": colours[kind]}),
-        ):
-            rate = [mean_of(rows, name, shift, "wrong") for shift in ALL]
-            right.scatter(x + offset, rate, marker=marker, label=name, **style)
+    for i, name in enumerate(("M1", "M1c", "M1 vote", "M2", "M2c", "M2 vote")):  # side by side so equal values show
+        right.plot(x + 0.1 * (i - 2.5), [mean_of(rows, name, shift, "wrong") for shift in ALL], "o", label=name)
     right.set_xticks(x, list(ALL), rotation=30)
     right.set(ylabel="wrong-decision rate")
-    right.legend(frameon=False, fontsize=8, ncol=2)
+    right.legend(fontsize=8)
     fig.suptitle("What the label-free signals see, and what correcting the visible error buys")
     save_figure(fig, "learned")
 

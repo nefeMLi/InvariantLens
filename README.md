@@ -98,7 +98,7 @@ It's the world-model version of the max-softmax baseline in classification, and 
 
 | Condition | Symmetry and balance signals | Ensemble | Predicted margin |
 |---|---|---|---|
-| Original situations | 0.86 to 0.93 (M1 and M2 on 1 or 2 mistakes each) | no mistakes | 0.996 to 1.000 |
+| Original situations | 0.86 to 0.90 for M1 and M2 (1 or 2 mistakes each); 0.93 for M3's balance signal (about 22) | no mistakes | 0.996 to 1.000 |
 | Stronger forces | 0.57 to 0.59 | 0.50 | 0.82 to 0.83 |
 | Friction | 0.57 | 0.56 | 0.84 to 0.85 |
 | Noisy observations | 0.54 to 0.60 | 0.53 | 0.87 to 0.89 |
@@ -108,8 +108,9 @@ These numbers are probably optimistic. My bank only keeps situations whose best 
 predicted margin can only mean the model is confused. In a real task many small margins are genuine near-ties, where
 picking "wrong" costs almost nothing. A second unplanned check works as well: flagging every copy that chose
 differently from the rest of its orbit catches 82% of the mistakes far from the origin, and 218 of the 246 decisions
-it flags are wrong. So scoring single decisions works; what doesn't work is using the size of the visible error as
-the score.
+it flags are wrong. Under the physics changes it is just as precise (48 of 61 and 50 of 52 flags are right), but it
+catches only about 1% of the mistakes there, since it can only see what the rules can see. So scoring single
+decisions works; what doesn't work is using the size of the visible error as the score.
 
 ![What the label-free signals see, and what correcting the visible error buys](figures/learned.svg)
 
@@ -132,7 +133,8 @@ of them scattered, and the vote removed all of them), but they rest on 5 and 6 m
   least there, because at 1% error many runs make no mistakes at all when the error is invisible, so their fitted
   slope misses the steepest part of the curve. The figure shows the drop is as large as at 3%.
 - I expected the signals to get better as more of a model's error became visible. They don't, and the positive
-  control shows why: a decision flips because it is a close call, not because the error is large.
+  control and the margin analysis suggest why: a decision flips because it is a close call, not because the error
+  is large.
 - I expected removing the visible error to remove wrong decisions on the original situations. There were almost none
   to remove. It only showed what it can do far from the training data.
 - I expected the ensemble to do better far from the data than under the physics changes. It made only 7 mistakes
@@ -176,7 +178,7 @@ of them scattered, and the vote removed all of them), but they rest on 5 and 6 m
 
 - Pre-register the margin and test it on a new bank that keeps near-ties, so its score isn't inflated.
 - Run the same check on a standard benchmark; MuJoCo's Reacher has the cleanest rotation symmetry.
-- Test the reference-frame explanation directly, by measuring how much of the error goes into relative motion.
+- Check whether the margin and the orbit flag together catch more mistakes than either alone.
 
 ## Why the split is exact
 

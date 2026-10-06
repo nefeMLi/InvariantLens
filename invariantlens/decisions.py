@@ -14,8 +14,7 @@ MARGIN = 0.05
 
 
 def situation(seed, speed=SPEED, spread=SPREAD, shift=0.0):
-    """A start state, a goal ahead of the target, and five candidate pushes, all drawn the same way. The whole scene
-    can be moved `shift` units along x, which the physics can't tell apart."""
+    """A start state, a goal ahead of the target and five candidate pushes. `shift` moves the whole scene along x."""
     rng = np.random.default_rng(seed)
     s = initial_state(rng, speed)
     d = s[0, 1] - s[0, 0]
