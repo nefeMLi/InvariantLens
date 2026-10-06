@@ -156,12 +156,22 @@ def continuous(kind, seed, bank, mu, device, angles=100, points=2000):
     return row
 
 
+def pick(rows, kinds, shifts):
+    return [r for r in rows if r["kind"] in kinds and r["shift"] in shifts]
+
+
 def mean_of(rows, kind, shift, key):
-    return np.nanmean([r[key] for r in rows if r["kind"] == kind and r["shift"] == shift], 0)
+    return np.nanmean([r[key] for r in pick(rows, [kind], [shift])], 0)
 
 
 def value(rows, kind, shift, seed, key):
-    return next(r[key] for r in rows if (r["kind"], r["shift"], r.get("seed")) == (kind, shift, seed))
+    return next(r[key] for r in pick(rows, [kind], [shift]) if r.get("seed") == seed)
+
+
+def weighted(rows, key):
+    """A share like 'consistent' or 'coverage', pooled over models by how many mistakes each made."""
+    mistakes = np.float64(sum(r["n_wrong"] for r in rows))  # a float, so no mistakes gives nan instead of an error
+    return sum(r[key] * r["n_wrong"] for r in rows if r["n_wrong"]) / mistakes
 
 
 def spearman(v):
@@ -172,14 +182,14 @@ def spearman(v):
 
 def report(rows) -> None:
     print("\nLearned models, mean over seeds")
-    extra = ("C16 disagreement", "SO(2) disagreement", "C16 defect", "SO(2) defect")
+    keys = (*COLUMNS, "C16 disagreement", "SO(2) disagreement", "C16 defect", "SO(2) defect")
     for kind in sorted({r["kind"] for r in rows}):
         for shift in [*ALL, "SO(2)"]:
-            mine = [r for r in rows if r["kind"] == kind and r["shift"] == shift]
-            keys = [k for k in (*COLUMNS, *extra) if mine and mine[0].get(k) is not None]
-            if keys:
-                print(f"  {kind:8} {shift:12} " + ", ".join(f"{k} {mean_of(mine, kind, shift, k):.3g}" for k in keys))
-    units = [r for r in rows if r["kind"] in KINDS and r["shift"] in SHIFTS]
+            mine = pick(rows, [kind], [shift])
+            shown = [k for k in keys if mine and mine[0].get(k) is not None]
+            if shown:
+                print(f"  {kind:8} {shift:12} " + ", ".join(f"{k} {mean_of(mine, kind, shift, k):.3g}" for k in shown))
+    units = pick(rows, KINDS, SHIFTS)
     for key in ("auroc_symmetry", "auroc_balance"):
         undefined = sum(not np.isfinite(r[key]) for r in units)
         print(f"H3 {key}: Spearman with the visible fraction, resampling trained models; {undefined} undefined")
@@ -187,14 +197,13 @@ def report(rows) -> None:
             # one cluster per trained model, holding its five shifts
             clusters = np.array(
                 [
-                    [(r["visible"], r[key]) for r in units if (r["kind"], r["seed"]) == (k, seed)]
+                    [(r["visible"], r[key]) for r in pick(units, [k], SHIFTS) if r["seed"] == s]
                     for k in kinds
-                    for seed in SEEDS
+                    for s in SEEDS
                 ]
             )
             if np.isfinite(clusters[..., 1]).any():
-                rho, lo, hi = bootstrap(clusters, spearman)
-                print(f"   {name:6} {rho:+.2f} [{lo:+.2f}, {hi:+.2f}]")
+                print(f"   {name:6} " + "{:+.2f} [{:+.2f}, {:+.2f}]".format(*bootstrap(clusters, spearman)))
     for kind in ("M1", "M2"):
         for shift in ALL:
             before = mean_of(rows, kind, shift, "by_situation") / 16
@@ -205,21 +214,15 @@ def report(rows) -> None:
                     f"H4 {name:8} {shift:12} change in wrong rate {change:+.2%} [{lo:+.2%}, {hi:+.2%}] over situations"
                     f" for these five models; by seed from {min(seeds):+.2%} to {max(seeds):+.2%}"
                 )
-            left = sum(r["n_wrong"] for r in rows if r["kind"] == f"{kind}c" and r["shift"] == shift)
+            left = sum(r["n_wrong"] for r in pick(rows, [f"{kind}c"], [shift]))  # none of these can be flagged
             removed = mean_of(rows, kind, shift, "visible")
-            # both signals of the corrected model are zero on any input, so none of these can be flagged
             print(f"   visible error removed by the correction {removed:.1%}; {left} wrong decisions left after it")
-    # totals over the five seeds on the unshifted bank; floats, so an empty count gives nan instead of an error
-    mine = {kind: [r for r in rows if r["kind"] == kind and r["shift"] == "none"] for kind in ("M1", "M2")}
-    wrong = {
-        kind: np.float64(sum(r["n_wrong"] for r in rows if r["kind"] == kind and r["shift"] == "none"))
-        for kind in ("M1", "M2", "M1 vote", "M2 vote")
-    }
-    consistent = sum(r["consistent"] * r["n_wrong"] for r in mine["M1"] if r["n_wrong"]) / wrong["M1"]
+    none = {kind: pick(rows, [kind], ["none"]) for kind in ("M1", "M2", "M1 vote", "M2 vote")}
+    consistent = weighted(none["M1"], "consistent")
     print(f"H6a M1 share of wrong decisions in consistent orbits, no shift: {consistent:.2f} (below 0.5 predicted)")
     for kind in ("M1", "M2"):
-        bound = sum(r["coverage"] * r["n_wrong"] for r in mine[kind] if r["n_wrong"])
-        removed = (wrong[kind] - wrong[f"{kind} vote"]) / bound
+        wrong, after = (sum(r["n_wrong"] for r in none[k]) for k in (kind, f"{kind} vote"))
+        removed = (wrong - after) / (weighted(none[kind], "coverage") * wrong)  # over the certificate's total
         print(
             f"H6b {kind} wrong decisions the vote removes, over the certificate: {removed:.2f} (0.5 or more predicted)"
         )
@@ -230,34 +233,28 @@ def report(rows) -> None:
             + " ".join(f"{x:.3f}" for x in breaking)
         )
     for shift in CONTROLS:
-        far = [r for r in rows if r["kind"] in ("M1", "M2") and r["shift"] == shift]
+        far = pick(rows, ("M1", "M2"), [shift])
         auc, lo, hi = bootstrap([r["auroc_symmetry"] for r in far])  # mean over the 10 models, interval over models
-        mistakes = np.float64(sum(r["n_wrong"] for r in far))  # float, so no mistakes at all gives nan, not an error
-        consistent = sum(r["consistent"] * r["n_wrong"] for r in far if r["n_wrong"]) / mistakes
-        m3 = [sum(r["n_wrong"] for r in rows if r["kind"] == "M3" and r["shift"] == s) for s in (shift, "none")]
-        verdict = "" if mistakes >= 100 else f"; only {mistakes:.0f} mistakes, so H7b and H7c are inconclusive"
+        mistakes = sum(r["n_wrong"] for r in far)
+        m3 = [sum(r["n_wrong"] for r in pick(rows, ["M3"], [s])) for s in (shift, "none")]
+        verdict = "" if mistakes >= 100 else f"; only {mistakes} mistakes, so H7b and H7c are inconclusive"
         print(
             f"H7 {shift}: M1 and M2 symmetry AUROC {auc:.2f} [{lo:.2f}, {hi:.2f}] (above 0.7 predicted), consistent"
-            f" share {consistent:.2f} (below 0.5 predicted){verdict}; M3 wrong decisions {m3[0]} against {m3[1]}"
-            f" unshifted (equal expected); ensemble AUROC {mean_of(rows, 'M4', shift, 'auroc_ensemble'):.2f} (above"
-            " 0.56 predicted)"
+            f" share {weighted(far, 'consistent'):.2f} (below 0.5 predicted){verdict}; M3 wrong decisions {m3[0]}"
+            f" against {m3[1]} unshifted (equal expected); ensemble AUROC"
+            f" {mean_of(rows, 'M4', shift, 'auroc_ensemble'):.2f} (above 0.56 predicted)"
         )
 
 
 def plot(rows) -> None:
     fig, (left, right) = plt.subplots(1, 2, figsize=(11, 4.5), layout="constrained")
     for kind in KINDS:
-        mine = [r for r in rows if r["kind"] == kind and r["shift"] in SHIFTS]
-        size = [6 + 2 * np.sqrt(r["n_wrong"]) for r in mine]  # bigger points rest on more mistakes
+        mine = pick(rows, [kind], SHIFTS)
+        x, size = [r["visible"] for r in mine], [6 + 2 * np.sqrt(r["n_wrong"]) for r in mine]  # bigger = more mistakes
         for key, marker in (("auroc_symmetry", "o"), ("auroc_balance", "x")):
-            if np.isfinite([r[key] for r in mine]).any():
-                left.scatter(
-                    [r["visible"] for r in mine],
-                    [r[key] for r in mine],
-                    s=size,
-                    marker=marker,
-                    label=f"{kind}, {key[6:]} signal",
-                )
+            y = [r[key] for r in mine]
+            if np.isfinite(y).any():
+                left.scatter(x, y, s=size, marker=marker, label=f"{kind}, {key[6:]} signal")
     left.axhline(0.5, color="black", lw=1, ls=":")
     left.set(xlabel="visible fraction of one-step error", ylabel="AUROC for wrong decisions")
     left.legend(fontsize=8)
