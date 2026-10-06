@@ -252,3 +252,22 @@ correction can't remove that. These runs are not added to H3, which stays on the
 - H7e: *wrong if* the ensemble's AUROC is 0.56 or below (the highest it reached under the physics shifts) at either
   offset.
 - If M1 and M2 make fewer than 100 wrong decisions in total at an offset, H7b and H7c count as inconclusive there.
+
+## Results log, 2026-10-06
+
+**Input-noise rerun (2026-10-05).** All four predictions written for it held: M3 chose alike in all 16 copies, the
+vote gained almost nothing, M1's and M2's mistakes came as whole orbits (0.97 and 0.96), and the visible fraction
+looked like the unshifted one while the AUROCs fell to about 0.55. With the fixed noise, H3 fails: the Spearman
+intervals are +0.06 [−0.12, +0.20] for the symmetry signal and +0.18 [−0.02, +0.39] for the balance signal. Most of
+its earlier support came from the noise bug.
+
+**H7.** The run's results were written at 02:07 on 6 October, after both H7 commits (14:17 and 14:30 on the 5th). It
+ran on Kaggle's CPU rather than its GPU, which is why it took 11.5 hours. The truth check passed, and M3 made 112
+mistakes far away, the same as unshifted, so H7a held. At 2.5 units M1 and M2 made only 13 mistakes, so H7b and H7c
+are inconclusive there and H7d failed. At 5 units (267 mistakes) H7b failed (AUROC 0.53 [0.49, 0.57]), H7c held
+(consistent share 0.00) and H7d held (−0.30% [−0.56%, −0.10%] for M1c, −0.28% [−0.53%, −0.09%] for M2c). H7e failed
+(0.37), but the ensemble made only 7 mistakes there, so that number says little.
+
+**Not pre-registered.** After all of this I looked at two label-free warnings I hadn't planned: the model's own
+predicted margin between its two best candidates, and a flag on copies that disagree with their orbit. They are
+computed by `experiments/posthoc.py` from the saved results and reported as exploratory.

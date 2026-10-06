@@ -13,9 +13,9 @@ breaks those rules can be measured from the model alone, by asking it the same q
 that follows the rules can't be seen without the true simulator. The split between the two is exact, and the visible
 part can even be subtracted.
 
-I wrote down what I expected before training any model, in [HYPOTHESES.md](HYPOTHESES.md). Three predictions and a
-few changes were added later, after the first experiment and before the trained models were evaluated. The log at
-the end of that file says what I had seen at each point.
+I wrote down what I expected before training any model, in [HYPOTHESES.md](HYPOTHESES.md). Some predictions were
+added later, and one bug was fixed after the results were in. The log at the end of that file says what I had seen
+at each point, and the git history shows when each prediction was committed.
 
 ## What I tested
 
@@ -31,122 +31,152 @@ some of those picks must be wrong.
 There are two experiments.
 
 - **Controlled.** I take the true simulator and add an error of fixed size, then slide that error from fully
-  invisible to fully visible. If decisions get worse along the way, visible error is the harmful kind; if not, it
-  isn't. I do this with two kinds of visible error: one that breaks the rotation rule, and one that only breaks the
-  momentum and centre-of-mass rules.
-- **Learned.** I train three kinds of network as world models, five copies each, and test them on the original
-  situations and under four changes they weren't trained for: stronger forces, added friction between discs, faster
-  starting speeds, and noise on what they observe. One network (M1) sees absolute coordinates, one (M2) is the same
-  but trained on randomly rotated data, and one (M3) is built so it always turns with the scene. Five copies of M1
-  together make an ensemble, the usual baseline for uncertainty.
+  invisible to fully visible. I do this with two kinds of visible error: one that breaks the rotation rule, and one
+  that only breaks the momentum and centre-of-mass rules.
+- **Learned.** I train three kinds of network as world models, five copies each. M1 sees absolute coordinates, M2 is
+  the same but trained on randomly rotated data, and M3 is built so it always turns with the scene. Five copies of M1
+  together make an ensemble. I test them on the original situations, under changes they weren't trained for
+  (stronger forces, friction between discs, faster starting speeds, noisy observations), and with the whole scene
+  moved away from the origin, which changes nothing in the physics but puts M1 and M2 somewhere they never trained.
 
 ## What I found
 
-**Visible and invisible error of the same size do the same damage, but only one of them shows.** When the visible
-part breaks the rotation rule, the wrong-decision rate doesn't move as the error slides from invisible to visible
-(at 3% error it stays at about 2.9%, slope +0.002 [−0.002, +0.006]). What changes is how the mistakes look.
-Invisible error makes the same mistake in all 16 rotations, so no consistency check can catch it. Even a small
-visible share scatters the mistakes: with 6% of the error visible, only a quarter to a third of them still come as
-whole orbits. Once all of the error is visible, the label-free check counts essentially every wrong decision.
+**The short version.** A decision goes wrong when the error in the predicted gap between the two best pushes is
+bigger than the gap itself. The rule-based checks see the error, but only its visible part. The model's own margin
+between its two best pushes sees the gap. Under changes in the physics and under sensor noise, almost all of the error
+is invisible, so the rule-based checks see nothing, while the margin still points at the close calls. Far from the
+training data, the error is visible but large everywhere, so its size says nothing about which decision will flip.
+There, comparing the rotated copies does: it finds most of the mistakes, and averaging over the copies fixes most of
+them. Rule-based checks tell you which part of the error you can remove, and the margin tells you which decisions are
+at risk. You need both.
 
-**Error that only breaks the momentum rules is less harmful.** With the second kind of visible error, decisions get
-better as more error moves into it: at 10% error the wrong-decision rate falls from 26.5% to 21.0% (slope −0.056
-[−0.074, −0.035]), and at 3% from 2.8% to 2.2%. The likely reason comes from the physics. This kind of error moves
-every disc by the same position and velocity offset, and the forces here depend only on where the discs are relative
-to each other. So it's like watching the scene from a slightly moving viewpoint: the collisions that decide which
-push works best don't change, and only the target's absolute position does. The invisible error has no such shared
-offset, so all of it goes into the relative motion that collisions depend on. I haven't tested this explanation
-directly, and it's specific to this system: breaking a conservation law can do real harm elsewhere, for example
-when energy slowly creeps up over a long rollout.
+**Same-size error does the same damage, visible or not.** In the controlled experiment, when the visible part breaks
+rotation, the wrong-decision rate doesn't move as the error slides from invisible to visible (at 3% error it stays
+at about 2.9%, slope +0.002 [−0.002, +0.006]). What changes is how the mistakes look. Invisible error makes the same
+mistake in all 16 rotations, so no consistency check can catch it. Even a small visible share scatters the mistakes:
+with 6% of the error visible, only a quarter to a third still come as whole orbits. Once all of it is visible, the
+label-free bound counts essentially every wrong decision, because the most common choice in an orbit is nearly
+always the right one.
+
+**Error that only breaks the momentum rules does less damage, and the physics says why.** With the second kind of
+visible error, decisions get better as more error moves into it: at 10% error the wrong-decision rate falls from 26.5%
+to 21.0% (slope −0.056 [−0.074, −0.035]), at 3% from 2.8% to 2.2%. This kind of error moves every disc by the same
+position and velocity offset. The forces here only depend on the discs' relative positions and velocities, and the
+push doesn't depend on the state, so a shared offset is just a change of reference frame. I checked it: at full
+strength the model gets every disc's position relative to the group right to 2.5·10⁻¹⁵, and only the group's drift
+is off (the target ends 0.32 away from where it should). Collisions don't amplify a drift, and they do amplify the
+invisible error, which goes entirely into relative motion. With walls, gravity or any position-dependent outside
+force, this error would stop being harmless.
 
 ![Equal one-step error, moved from invisible to visible](figures/controlled.svg)
 
-**When the physics changes, the trained models fail and every label-free signal is close to blind.** On the
-situations they were trained for, the models are nearly perfect: M1 made 5 wrong decisions out of 40,000. With 1.5
-times stronger forces between the discs, every model picks wrong 16% of the time, and with added friction, 11 to
-12%. The theory already says why. A change in physics that still respects rotations and momentum adds only invisible
-error. The measurements agree: less than 0.2% of the error is visible, 96 to 100% of the mistakes come as whole
-orbits, and the label-free check catches at most 2% of them. Both signals score an AUROC of 0.57 to 0.59, barely
-above chance. The ensemble does no better (0.50 and 0.56), because all five copies learned the same old physics.
+*Rows: wrong decisions, the share of them that come as whole orbits, and the share the bound catches. Grey lines are
+the 20 random errors.*
 
-**Where there is visible error, the signals do follow it.** Across models, copies and conditions, a signal is better
-at flagging wrong decisions when more of the model's error is visible: Spearman +0.68 [+0.62, +0.73] for the rotation
-signal and +0.58 [+0.50, +0.67] for the momentum signal. This is weaker evidence than it looks. Most of the
-correlation comes from the difference between conditions: under the physics changes the visible share is near zero
-and the scores near chance, which is the previous finding again. The highest scores rest on one or two wrong
-decisions each (point size in the figure shows how many). The clearest single case is M3: its only visible error
-is momentum error, and the momentum signal flags its mistakes with an AUROC of 0.93, from about 22 mistakes per
-model.
+**When the physics changes or the sensor is noisy, the rule-based checks and the ensemble are blind.** On the
+situations they were trained for, the models are nearly perfect: M1 made 5 wrong decisions out of 40,000. With 1.5
+times stronger forces, every model picks wrong 16% of the time, and with friction, 11 to 12%. A change in physics that
+still respects rotations and momentum adds only invisible error, and the measurements agree: under 0.2% of the error
+is visible, 96 to 100% of the mistakes come as whole orbits, and the label-free bound catches at most 2% of them. The
+two signals score an AUROC of 0.57 to 0.59, barely above chance, and the ensemble 0.50 and 0.56. That last part fits
+what's known about ensembles: they notice unfamiliar inputs, not familiar inputs whose outcome has changed, and a new
+physics is the second kind. Noisy observations behave the same way. With one noisy reading per situation, the error it
+causes turns with the scene, so it is invisible too: the mistakes come as whole orbits, the signals score 0.54 to 0.60,
+and neither the correction nor the vote helps.
+
+**Far from the training data, the error becomes visible, and comparing rotated copies works.** Moving every situation
+5 units from the origin changes nothing the true physics or M3 can see (M3 made 112 mistakes there, exactly as before).
+M1 and M2 read absolute coordinates, though, and between 65 and 88% of their error turns visible. They make 267
+mistakes, and every one of them scatters across its orbit. The label-free bound counts 90 to 97% of them, and the
+correction removes most: M1 drops from 0.39% to 0.08% wrong, M2 from 0.28% to none. But the size of the symmetry
+signal doesn't single out the bad decisions (AUROC 0.53 [0.49, 0.57]), because it is high for every decision out
+there, right or wrong. At 2.5 units the models barely noticed the move (13 mistakes), so that offset says little.
+
+**The model's own margin is the strongest warning, and I didn't plan for it.** After all the results were in, I
+looked at the simplest label-free score there is: the gap between the model's best and second-best predicted return.
+It's the world-model version of the max-softmax baseline in classification, and I should have pre-registered it.
+
+| Condition | Symmetry and balance signals | Ensemble | Predicted margin |
+|---|---|---|---|
+| Original situations | 0.86 to 0.93 (M1 and M2 on 1 or 2 mistakes each) | no mistakes | 0.996 to 1.000 |
+| Stronger forces | 0.57 to 0.59 | 0.50 | 0.82 to 0.83 |
+| Friction | 0.57 | 0.56 | 0.84 to 0.85 |
+| Noisy observations | 0.54 to 0.60 | 0.53 | 0.87 to 0.89 |
+| Far from the origin | 0.53 to 0.62 (M1 and M2) | 0.37 (7 mistakes) | 0.97 to 1.00 |
+
+These numbers are probably optimistic. My bank only keeps situations whose best push wins by at least 5%, so a small
+predicted margin can only mean the model is confused. In a real task many small margins are genuine near-ties, where
+picking "wrong" costs almost nothing. A second unplanned check works as well: flagging every copy that chose
+differently from the rest of its orbit catches 82% of the mistakes far from the origin, and 218 of the 246 decisions
+it flags are wrong. So scoring single decisions works; what doesn't work is using the size of the visible error as
+the score.
 
 ![What the label-free signals see, and what correcting the visible error buys](figures/learned.svg)
 
-**Removing the visible error fixes what little it breaks.** The corrected models drop 53 to 57% of the one-step error,
-and make no wrong decisions at all on the original situations, or with faster starting speeds. But the models only
-made a handful of mistakes there to begin with, so the improvement (−0.01% [−0.05%, +0.00%]) doesn't clear the bar I
-set in advance. Under the physics changes, where the mistakes actually are, the correction changes nothing, because
-there is nothing visible to remove. Averaging the model's predictions over the 16 rotations before choosing does the
-same. Under input noise it cuts wrong decisions from 1.4% to 0.4%, but that's an artifact of my setup, not something
-a real agent could do: each of the 16 rotated copies got its own noise, so the vote averages 16 separate noisy
-observations. A real agent has one observation, and rotating it gives the same noise turned around, with nothing
-new to average. The same artifact explains why even M3, which is exactly symmetric, disagrees across rotations
-under noise, and why the visible share there (94%) measures noise rather than model error.
+*Left: one point per trained model and condition, sized by how many mistakes its AUROC rests on. Right: wrong
+decisions before and after the correction and the vote.*
 
-**The check works beyond its 16 angles.** At 100 random angles, decisions disagree and the error breaks rotation
-about as often as at the 16 checked ones, and M3 stays exactly symmetric at all of them.
+**The smaller results.** The visible share of a model's error does not explain how well the signals work (Spearman
++0.06 [−0.12, +0.20] and +0.18 [−0.02, +0.39]), so that prediction failed. It looked supported at first, but the
+support came from a bug in how I added input noise. Removing the visible error removed every mistake it could reach
+on the original situations, but there were only about 5 to remove, so that prediction failed too. The check carries
+over beyond its 16 angles: the error breaks rotation by the same amount at 100 random angles as at the 16 checked ones
+(4.9·10⁻⁵ for M1, 3.3·10⁻⁵ for M2). The two predictions about M1's mistakes on the original situations held (all
+of them scattered, and the vote removed all of them), but they rest on 5 and 6 mistakes, so they say almost nothing.
 
 ## Things that didn't work out the way I expected
 
 - I expected visible and invisible error of the same size to do different amounts of damage. When the visible part
-  breaks rotation, they don't, at any error size. Only the pattern of the mistakes differs.
+  breaks rotation, they don't. Only the pattern of the mistakes differs.
 - I expected that pattern to show most clearly at the smallest error. By the measure I fixed in advance it showed
-  least there. At 1% error many runs make no mistakes at all when the error is invisible, so their fitted slope
-  misses the steepest part of the curve. The figure shows the drop is just as large as at 3%.
-- I expected removing the visible error to remove wrong decisions. It removes every one it can reach, but on the
-  original situations there were almost none, and under the physics changes the errors that count are the ones it
-  can't see.
-- I expected training on rotated data (M2) to cut the part of the error that breaks rotation. As a share of the
-  one-step error it didn't: 38 to 58% for M2, against 50 to 61% for M1. That share can stay put even if training
-  shrinks the rotation-breaking error in absolute terms, as long as the rest shrinks too, so this isn't evidence
-  that the augmentation failed. Comparing the absolute size would settle it.
-- My first version of the input-noise test added fresh noise at every step of the model's own predictions, which
-  swamped all the models into identical decisions. I moved the noise to what the model observes at the start, before
-  the full run.
-- I expected the evaluation to take hours on my laptop. In float64 it would have taken about a day on 12 cores, so I
-  ran it on a GPU instead.
+  least there, because at 1% error many runs make no mistakes at all when the error is invisible, so their fitted
+  slope misses the steepest part of the curve. The figure shows the drop is as large as at 3%.
+- I expected the signals to get better as more of a model's error became visible. They don't, and the positive
+  control shows why: a decision flips because it is a close call, not because the error is large.
+- I expected removing the visible error to remove wrong decisions on the original situations. There were almost none
+  to remove. It only showed what it can do far from the training data.
+- I expected the ensemble to do better far from the data than under the physics changes. It made only 7 mistakes
+  there, which is too few to judge.
+- My first input-noise test gave each rotated copy its own noise, which made the vote look like it removed most of
+  the mistakes and let even M3 disagree with itself. A real agent has one observation, turned 16 ways. I fixed it
+  after seeing the results, logged that, and kept the old numbers in the git history.
+- I expected training on rotated data (M2) to cut the rotation-breaking part of the error. As a share it didn't (38 to
+  58%, against 50 to 61% for M1), but a share can stay put while the absolute error shrinks, so this doesn't show the
+  augmentation failed.
+- I expected the evaluation to take hours on my laptop. In float64 it would have taken about a day on 12 cores, so it
+  ran on a GPU.
 
 ## What I'd push back on, if I were reviewing this
 
-I tried to be honest about these. Some are limits of the setup, some are limits of what the results can say.
-
-- **The main learned result is close to guaranteed.** A change in physics that keeps the rules intact must put its
-  error in the invisible part; that follows from the maths. The experiment shows how large the effect is and that an
-  ensemble fails too, not that it happens.
-- **It's a toy world.** Five discs in 2D, a known reward, and models that see states, not images. I haven't run the
-  same check on a standard benchmark such as a MuJoCo environment. That's the obvious next step, though there only
-  the rotation half of the check would apply: gravity and contact forces break the momentum rules.
-- **There's no positive control yet.** I haven't tested a change that breaks the rules, such as adding walls, to show
-  the signals light up when the error does become visible.
+- **The physics-shift result is close to guaranteed.** A change in physics that keeps the rules intact must put its
+  error in the invisible part; that follows from the maths. The experiment shows how large the effect is.
+- **The best signal wasn't pre-registered.** The margin and the orbit flag came after all the results, and the margin's
+  scores are inflated by how the bank was built.
+- **It's a toy world.** Five discs in 2D, a known reward, models that see states, not images. I haven't run it on a
+  standard benchmark such as a MuJoCo environment, where only the rotation half of the check would apply, since
+  gravity and contact break the momentum rules.
 - **On the original situations the evidence is thin.** The models make 5 to 112 mistakes per 40,000 decisions there,
-  so everything measured on that bank rests on a handful of them. Most of the evidence comes from the changed
-  conditions.
-- **Some predictions came after part of the data.** The balance-only experiment and the two predictions about how
-  trained models' mistakes are spread were written after the first experiment and a small code test. They are marked
-  as such in HYPOTHESES.md, but they deserve less weight than the original ones.
+  so everything measured on that bank rests on a handful of them.
+- **Some predictions came after part of the data.** The balance-only experiment, the predictions about trained
+  models' mistakes, the noise predictions and the positive control were all written after earlier results. Each is
+  marked with what I had seen, and the noise predictions were committed only after their results came back.
 - **The controlled errors are random smooth fields.** Real model errors can look different.
-- **The explanation for the balance-only result is untested.** It follows from the physics, but I haven't checked
-  it directly, for example by measuring how much the error changes the collisions.
-- **The input-noise test isn't realistic for the orbit vote.** Each rotated copy got separate noise, which a real
-  agent with one observation wouldn't have. The vote's gain there, and the certificate's coverage, come from that.
-- **The correlation between visible share and signal quality is mostly between conditions.** Within a single
-  condition there are too few mistakes on the original bank to say much.
-- **Only part of the symmetry is checked.** The check covers 16 rotations, not every angle (random angles behave the
-  same, but without a guarantee), and only two conservation laws, which need open space and equal, known masses.
+- **"Speed × 2" is a mild shift.** Pushing already speeds the discs up in training, so only 4% of the faster starting
+  speeds go beyond what the models saw (the 99th percentile of training speeds is 1.51). That's why they made almost
+  no mistakes there.
+- **Only part of the symmetry is checked.** The check covers 16 rotations, not every angle, and only two conservation
+  laws, which need open space and equal, known masses.
 - **M3 differs from M1 in more than symmetry.** Its outputs can only point along the gaps between discs, its own
-  velocity and the push. If it does better or worse, symmetry isn't the only possible reason.
+  velocity and the push, so symmetry isn't the only possible reason for any difference.
 - **The label-free bound assumes one clearly best push.** My bank guarantees that; a real agent couldn't check it.
-- **The pieces are known.** Splitting an error by symmetry and using disagreement as a signal both exist already.
-  What's new here is the link to decisions.
-- **Invisible doesn't mean harmless, and visible doesn't mean wrong at that particular state.**
+- **The pieces are known.** Splitting an error by symmetry, using disagreement as a signal and using the margin as a
+  confidence score all exist already. What's new is putting them side by side on decisions.
+
+## What I'd do next
+
+- Pre-register the margin and test it on a new bank that keeps near-ties, so its score isn't inflated.
+- Run the same check on a standard benchmark; MuJoCo's Reacher has the cleanest rotation symmetry.
+- Test the reference-frame explanation directly, by measuring how much of the error goes into relative motion.
 
 ## Why the split is exact
 
@@ -193,6 +223,10 @@ zero: its mistakes, if any, come as whole orbits.
   one-step change, 20 random draws each, with the visible share going from 0 to 1 in five steps.
 - **Learned models.** Message-passing networks with three layers of width 64 and parameter counts within 1% of each
   other, trained for 200 epochs on 50,000 random transitions. Everything is evaluated in float64.
+- **Noisy observations.** Noise with standard deviation 0.02 on the starting positions and velocities, one draw per
+  situation, turned with each rotated copy.
+- **Far from the origin.** Every situation moved 2.5 or 5 units along x before rotating; training positions reach about
+  3 to 4 units out.
 
 ## Background
 
@@ -200,8 +234,10 @@ Splitting a function into the part that respects a symmetry and the part that br
 Zaidi (ICML 2021), and Wang et al. (NeurIPS 2023) studied what goes wrong when the assumed symmetry is wrong.
 Disagreement under transformed inputs is a known label-free uncertainty signal (Ayhan and Berens, MIDL 2018). M3
 follows the EGNN of Satorras, Hoogeboom and Welling (ICML 2021), and the ensemble baseline is Lakshminarayanan,
-Pritzel and Blundell (NeurIPS 2017). What this project adds is the link to decisions: which part of a world model's
-error can be seen, removed or bounded without ground truth, and what each part does to an agent's choices.
+Pritzel and Blundell (NeurIPS 2017); Ovadia et al. (NeurIPS 2019) showed how such uncertainty holds up under dataset
+shift. The margin is the decision-making version of the maximum-softmax baseline of Hendrycks and Gimpel (ICLR 2017).
+What this project adds is the link to decisions: which part of a world model's error can be seen, removed or bounded
+without ground truth, and what each part does to an agent's choices.
 
 ## Running it
 
@@ -212,17 +248,18 @@ pip install -r requirements.txt
 pytest tests.py
 python -m experiments.controlled    # --eps 0.03 runs only the go/no-go size, --fields one kind of error
 python -m experiments.learned       # trains 15 models on the CPU, then evaluates them: the slow part
+python -m experiments.posthoc       # the unplanned margin and orbit-flag analysis, from the saved results
 ```
 
-Run times: the controlled experiment took about 6.5 hours on 4 CPU cores (the first kind of error alone took about
-an hour on 12).
-Training takes 3 to 4 hours per model on one core, with the 15 in parallel. The evaluation took about 3 hours on one
-T4 GPU, and would take about a day on 12 CPU cores. It uses a GPU when PyTorch sees one (`--device` to choose; use a
-CUDA build of the same PyTorch version), and `--workers` sets how many processes share it.
+Run times: the controlled experiment took about 6.5 hours on 4 CPU cores. Training takes 3 to 4 hours per model on one
+core, with the 15 in parallel. The evaluation took about 3 hours on one T4 GPU; on CPUs it is much slower (the
+far-from-origin part alone took 11.5 hours on Kaggle's 4 cores). Evaluation uses a GPU when PyTorch sees one
+(`--device` to choose; use a CUDA build of the same PyTorch version), and `--workers` sets how many processes share it.
 
 Results go to `results/` and figures to `figures/`. Trained models are saved in `results/models/` and each finished
 evaluation in `results/learned/`, so an interrupted run picks up where it stopped (delete `results/learned/` after
-changing the code). `--figures-only` redraws the figures from saved results.
+changing the code). `--figures-only` redraws the figures from saved results. The saved jobs are in the repo, so
+`posthoc.py` runs straight away.
 
 The tests check the momentum rules, that the true simulator agrees with itself across every rotation, that the
 projections behave as the maths says, that a model whose error is invisible shows no visible error, that the
@@ -230,7 +267,7 @@ controlled errors have the visible share they should, that the corrected model's
 piece, and that M3 is exactly symmetric in float64.
 
 The code is in `invariantlens/` (the simulator, the decision bank, the projections and the correction, and the
-networks), and the two experiments are in `experiments/`. A quick example:
+networks), and the experiments are in `experiments/`. A quick example:
 
 ```python
 import numpy as np
