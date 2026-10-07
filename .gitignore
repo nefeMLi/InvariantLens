@@ -3,3 +3,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+results/learned/
+results/models/
+results.zip
+results/diagnose/
+kaggle.zip

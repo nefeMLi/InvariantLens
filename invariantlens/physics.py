@@ -1,7 +1,7 @@
 """The true simulator: five unit-mass discs, Morse pair forces and a held push on the agent."""
 
 import numpy as np
-from scipy.spatial.distance import pdist
+from scipy.spatial.distance import pdist, squareform
 
 N = 5  # disc 0 is the agent, disc 1 the target
 DEPTH, WIDTH, R0 = 1.0, 2.0, 1.0  # Morse D, a, r0
@@ -27,12 +27,18 @@ def rotation(angle):
 ROTATIONS = rotation(2 * np.pi * np.arange(16) / 16)  # C16, acting on every trailing 2-vector as v @ R.T
 
 
-def initial_state(rng, speed=SPEED):
-    """Positions and velocities, (2, N, 2): the agent 1 to 1.5 from the target, every pair at least 0.8 apart."""
+def initial_state(rng, speed=SPEED, crowd=0.0):
+    """Positions and velocities, (2, N, 2): the agent 1 to 1.5 from the target, every pair at least 0.8 apart. With
+    `crowd`, the first distractor starts that far from the target instead."""
     while True:
         x = uniform_disc(rng, 2.0, N - 1)
         x = np.vstack([x[0] + polar(rng.uniform(1.0, 1.5), rng.uniform(0, 2 * np.pi)), x])
-        if pdist(x).min() >= 0.8:
+        if crowd:
+            x[2] = x[1] + polar(crowd, rng.uniform(0, 2 * np.pi))
+        d = np.where(np.eye(N, dtype=bool), np.inf, squareform(pdist(x)))
+        if crowd:  # the crowded pair is meant to be close
+            d[1, 2] = d[2, 1] = np.inf
+        if d.min() >= 0.8:
             return np.stack([x, rng.normal(0, speed, (N, 2))])
 
 

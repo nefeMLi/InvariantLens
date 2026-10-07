@@ -1,8 +1,9 @@
 """H3, H4 and H5: trained models and their label-free signals, the corrected models, the ensemble and the orbit vote."""
 
 import argparse
+import json
 import multiprocessing
-import pickle
+import re
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from functools import partial
@@ -16,6 +17,7 @@ from experiments.common import (
     ROOT,
     auroc,
     bootstrap,
+    cached,
     check_truth,
     choose,
     chunks,
@@ -47,15 +49,25 @@ DONE = ROOT / "results" / "learned"  # one file per finished evaluation; delete 
 COLUMNS = ("wrong", "consistent", "visible", "auroc_symmetry", "auroc_balance", "auroc_ensemble", "coverage")
 
 
+def saved(name):
+    """results/learned/<name>.npz, with anything but letters, digits, dots and underscores turned into dashes."""
+    return DONE / f"{re.sub(r'[^\w.]+', '-', name).strip('-')}.npz"
+
+
 def kept(fn, name, *args):
-    """fn(*args), saved to results/learned/<name>.pkl as soon as it finishes, so an interrupted run resumes."""
-    path = DONE / f"{name}.pkl"
-    if not path.exists():
-        DONE.mkdir(parents=True, exist_ok=True)
-        part = path.with_suffix(".part")  # renamed only once complete, so a killed run leaves no broken file
-        part.write_bytes(pickle.dumps(fn(*args)))
-        part.replace(path)
-    return pickle.loads(path.read_bytes())
+    """fn(*args) -> (rows, returns), saved as soon as it finishes, with the rows as JSON."""
+
+    def arrays():
+        rows, returns = fn(*args)
+        return {"rows": json.dumps(rows), "returns": returns}
+
+    job = cached(saved(name), arrays)
+    return json.loads(job["rows"].item()), job["returns"]
+
+
+def read_job(name):
+    """The rows and returns of a finished evaluation."""
+    return kept(None, name)
 
 
 def fit(kind, seed):
@@ -156,7 +168,7 @@ def continuous(kind, seed, bank, mu, device, angles=100, points=2000):
         choices = choose(model, replace(bank, state=state, goal=goal, actions=actions))
         row[f"{name} disagreement"] = float(certificate(choices).mean() / len(R))
         row[f"{name} defect"] = float(np.mean([mean_square(model(s @ r.T, a @ r.T) - y @ r.T) for r in R]))
-    return row
+    return [row], np.zeros(0)  # no returns, so it saves like evaluate
 
 
 def pick(rows, kinds, shifts):
@@ -294,7 +306,7 @@ def run(situations, device, workers):
             task = kind, seed, banks["none"], mus["none"], device
             jobs[kind, seed, "SO(2)"] = pool.submit(kept, continuous, f"{kind}_{seed}_SO(2)", *task)
         results = {key: job.result() for key, job in jobs.items()}
-    rows = [row for key, out in results.items() for row in ([out] if key[2] == "SO(2)" else out[0])]
+    rows = [row for out in results.values() for row in out[0]]
     return rows + pooled(banks, {key: out[1] for key, out in results.items() if key[2] != "SO(2)"})
 
 

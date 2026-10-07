@@ -5,12 +5,10 @@ The margin is the gap between the model's best and second-best predicted return,
 The orbit flag marks a copy whose choice differs from the most common choice in its orbit. Needs the saved jobs in
 results/learned/ from a learned run."""
 
-import pickle
-
 import numpy as np
 
 from experiments.common import auroc, bootstrap, choose, score
-from experiments.learned import ALL, DONE, KINDS, SEEDS, observed, spearman
+from experiments.learned import ALL, KINDS, SEEDS, observed, read_job, spearman
 from invariantlens.decisions import make_bank
 from invariantlens.physics import step
 
@@ -22,7 +20,7 @@ if __name__ == "__main__":
         for kind in KINDS:
             aucs, wrong, flag = [], [], []
             for seed in SEEDS:
-                rows, returns = pickle.loads((DONE / f"{kind}_{seed}_{shift}.pkl").read_bytes())
+                rows, returns = read_job(f"{kind}_{seed}_{shift}")
                 units[kind, seed, shift] = rows[0]
                 top = np.sort(returns, -1)
                 margin = top[..., -1] - top[..., -2]

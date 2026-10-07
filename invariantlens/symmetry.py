@@ -1,8 +1,9 @@
-"""The audit: rotation average, balance fix, the invisible part of an error, the correction and the certificate."""
+"""The audit: rotation average, balance fix, the invisible part of an error, the correction, the canonical pose and the
+certificate."""
 
 import numpy as np
 
-from invariantlens.physics import ROTATIONS, N, balance, totals
+from invariantlens.physics import ROTATIONS, N, balance, rotation, totals
 
 
 def rotate(v):
@@ -35,12 +36,34 @@ def corrected(model):
     return average(lambda s, a: fix(model(s, a), balance(s, a)))
 
 
+def canonical(model):
+    """The model asked once, in a standard pose: the scene turned about the origin until the agent faces the target
+    along +x, and the answer turned back. It turns with the scene exactly, at one call instead of 16, but keeps the
+    error of the one pose it asks about instead of averaging it away."""
+
+    def posed(s, a):
+        d = s[..., 0, 1, :] - s[..., 0, 0, :]
+        R = rotation(-np.arctan2(d[..., 1], d[..., 0]))
+        y = model(np.einsum("...ij,...kmj->...kmi", R, s), np.einsum("...ij,...j->...i", R, a))
+        return np.einsum("...ji,...kmj->...kmi", R, y)
+
+    return posed
+
+
 def signals(model, s, a):
     """The symmetry and balance signals at each (s, a), from the model alone."""
     ys = model(rotate(s), rotate(a))
     y = ys[0]  # rotation 0 is the identity, so this is the model's own answer
     d, r = y - unrotate(ys), totals(y) - balance(s, a)
     return np.sqrt(np.square(d).sum((-3, -2, -1))), np.sqrt(np.square(r).sum((-2, -1)))
+
+
+def surprise(model, s, a, s1):
+    """Per transition (s, a, s'): the squared error |F(s, a) - s'|^2, and its squared visible part
+    |F(s, a) - F_c(s, a)|^2, which needs no s'. Summed over transitions, their ratio is the share of the error that
+    the correction can remove."""
+    y = model(s, a)
+    return np.square(y - s1).sum((-3, -2, -1)), np.square(y - corrected(model)(s, a)).sum((-3, -2, -1))
 
 
 def certificate(choices):

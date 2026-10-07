@@ -11,7 +11,7 @@ from experiments.controlled import check_injection
 from invariantlens.decisions import make_bank, reward, rollout
 from invariantlens.models import Net, world_model
 from invariantlens.physics import A_MAX, N, balance, initial_state, step, totals, uniform_disc
-from invariantlens.symmetry import average, certificate, corrected, fix, invisible, rotate, signals
+from invariantlens.symmetry import average, canonical, certificate, corrected, fix, invisible, rotate, signals, surprise
 
 TRUTHS = {"base": step, "D x 1.5": partial(step, depth=1.5), "damping": partial(step, damping=0.5)}
 PROJECTIONS = {
@@ -115,3 +115,27 @@ def test_fast_forward_matches():
     for equivariant in (False, True):
         net = Net(equivariant, [1.0] * 5).double()
         torch.testing.assert_close(net.eval()(s, a), net.train()(s, a), rtol=0, atol=1e-12)
+
+
+def test_surprise():
+    """All of a constant drift's error is visible; none of a change in the physics is."""
+    s, a = orbit_sample()
+    r, w = surprise(lambda s, a: step(s, a) + 0.01 * np.array([1.0, 0.0]), s, a, step(s, a))
+    np.testing.assert_allclose(w, r, rtol=1e-8)
+    r, w = surprise(step, s, a, step(s, a, depth=1.1))
+    assert w.max() < 1e-20 < r.min()
+
+
+def test_frame_shifts():
+    """Moving the scene, or giving every disc and the goal the same drift, changes nothing the physics can see."""
+    plain = make_bank(3, margin=1e-6)
+    for shift in ({"shift": 10.0}, {"drift": 2.0}):
+        np.testing.assert_allclose(make_bank(3, margin=1e-6, **shift).returns, plain.returns, rtol=1e-9, atol=0)
+
+
+def test_canonical():
+    """Asked in a standard pose, even M1 turns with the scene, at every angle."""
+    torch.manual_seed(0)
+    s, a = orbit_sample()
+    symmetry, _ = signals(canonical(world_model(Net(False, [1.0] * 5))), s, a)
+    assert symmetry.max() < 1e-10

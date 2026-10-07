@@ -5,7 +5,7 @@ from itertools import count
 
 import numpy as np
 
-from invariantlens.physics import A_MAX, ROTATIONS, SPEED, initial_state, polar, step
+from invariantlens.physics import A_MAX, DT, ROTATIONS, SPEED, initial_state, polar, step
 
 HORIZON = 10
 CONE = np.pi / 3  # the goal lies within this angle of the agent-to-target heading, so pushing is the right idea
@@ -13,10 +13,12 @@ SPREAD = 0.6  # sd of the candidates' heading offset; the one knob the go/no-go 
 MARGIN = 0.05
 
 
-def situation(seed, speed=SPEED, spread=SPREAD, shift=0.0):
-    """A start state, a goal ahead of the target and five candidate pushes. `shift` moves the whole scene along x."""
+def situation(seed, speed=SPEED, spread=SPREAD, shift=0.0, drift=0.0, crowd=0.0):
+    """A start state, a goal ahead of the target and five candidate pushes. `shift` moves the whole scene along x,
+    `drift` gives every disc and the goal the same extra velocity along x, and `crowd` starts a distractor that close
+    to the target. Shift and drift change nothing the physics can see."""
     rng = np.random.default_rng(seed)
-    s = initial_state(rng, speed)
+    s = initial_state(rng, speed, crowd)
     d = s[0, 1] - s[0, 0]
     heading = np.arctan2(d[1], d[0])
     goal = s[0, 1] + polar(rng.uniform(0.5, 1.5), heading + rng.uniform(-CONE, CONE))
@@ -24,7 +26,8 @@ def situation(seed, speed=SPEED, spread=SPREAD, shift=0.0):
     phase, force = rng.uniform(0, 2 * np.pi, (5, 1)), rng.uniform(0.5, 1.0, (5, 1)) * A_MAX
     angle = heading + offset + amplitude * np.sin(2 * np.pi * np.arange(HORIZON) / HORIZON + phase)
     s[0] += (shift, 0.0)
-    return s, goal + (shift, 0.0), polar(force, angle)
+    s[1] += (drift, 0.0)
+    return s, goal + (shift + drift * HORIZON * DT, 0.0), polar(force, angle)
 
 
 def rollout(model, s, actions):
@@ -52,13 +55,16 @@ class Bank:
     best: np.ndarray  # (n,) true best candidate of the unrotated situation
 
 
-def make_bank(size=500, truth=step, speed=SPEED, spread=SPREAD, shift=0.0):
-    """The first `size` seeds whose best push beats the runner-up by the margin, each in all 16 rotations."""
+def make_bank(
+    size=500, truth=step, speed=SPEED, spread=SPREAD, shift=0.0, drift=0.0, crowd=0.0, margin=MARGIN, start=0
+):
+    """The first `size` seeds from `start` whose best push beats the runner-up by the margin, each in all 16
+    rotations."""
     seeds, kept = [], []
-    for seed in count():
-        s, goal, actions = situation(seed, speed, spread, shift)
+    for seed in count(start):
+        s, goal, actions = situation(seed, speed, spread, shift, drift, crowd)
         second, first = np.sort(reward(rollout(truth, s, actions), goal))[-2:]
-        if (first - second) / max(abs(first), 1e-3) > MARGIN:
+        if (first - second) / max(abs(first), 1e-3) > margin:
             seeds.append(seed)
             kept.append((s, goal, actions))
         if len(kept) == size:

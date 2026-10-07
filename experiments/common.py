@@ -72,6 +72,11 @@ def auroc(signal, wrong) -> float:
     return float((rankdata(signal)[wrong].sum() - n * (n + 1) / 2) / (n * (wrong.size - n)))
 
 
+def regret(returns, choices):
+    """How much further from the goal each choice ends than the best candidate would."""
+    return returns.max(-1) - np.take_along_axis(returns, choices[..., None], -1)[..., 0]
+
+
 def slope(x, y) -> float:
     """Least-squares slope of y on x over the finite y; nan with fewer than two."""
     ok = np.isfinite(y)
@@ -86,6 +91,20 @@ def bootstrap(values, statistic=np.mean, seed=0) -> tuple[float, float, float]:
         return float("nan"), float("nan"), float("nan")
     draws = [statistic(v[i]) for i in np.random.default_rng(seed).integers(0, len(v), (RESAMPLES, len(v)))]
     return float(statistic(v)), *np.nanpercentile(draws, [2.5, 97.5]).tolist()
+
+
+def cached(path, fn, *args):
+    """fn(*args), a dict of arrays, saved to path as soon as it finishes, so an interrupted run resumes. Stored as plain
+    arrays, so loading runs no code."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        arrays = fn(*args)
+        part = path.with_suffix(".part")  # renamed only once complete, so a killed run leaves no broken file
+        with part.open("wb") as f:  # a file object, so numpy doesn't add .npz to the name
+            np.savez_compressed(f, **arrays)
+        part.replace(path)
+    with np.load(path) as saved:
+        return dict(saved)
 
 
 def parallel(fn, tasks):
