@@ -277,3 +277,75 @@ computed by `experiments/posthoc.py` from the saved results and reported as expl
 the model, and that condition can't test H3. Without it, H3's Spearman is +0.72 [+0.59, +0.82] for the symmetry
 signal and +0.63 [+0.43, +0.81] for the balance signal. With far 5 in its place they are +0.11 [−0.13, +0.33] and
 +0.42 [+0.27, +0.60]. H3 still counts as failed. Both checks are in `experiments/posthoc.py`.
+
+## Version 2: where does a learned symmetry break, and can averaging repair it? (2026-10-07)
+
+Written after all of the above and after exploring on dev seeds (below), before any test seed was used. Situations
+from seed 1,000,000 on are dev, from 2,000,000 on test; version 1 used seeds from 0. Run by `experiments/diagnose.py`.
+
+**The question.** M1 and M2 were never told that the physics turns with the scene; they learned it from data, M2
+from data turned on purpose. When such a model is asked about situations it never trained on, does the symmetry it
+learned still hold? Where it breaks, the error shows up in the rotation check, and averaging over the 16 rotations,
+the correction 𝒫_G(F̂ − Me), removes it. Where it holds, the error is invisible, and nothing computed from the model
+can help. So: where does a learned symmetry break outside the data, and when does averaging repair the decisions?
+
+**Background.** Symmetry learned from data is known to be unreliable under distribution shift (Moskalev et al.,
+2023), but not where it breaks. Averaging or canonicalising a model over a group at test time makes it exactly
+symmetric (Puny et al., 2022; Kim et al., 2023; Mondal et al., 2023), but those papers ask about accuracy and sample
+efficiency, not about which extrapolation errors it removes. Gruver et al. (2023) measure how much a trained network
+breaks a symmetry; the visible share is the finite-group version of that measure.
+
+**What the dev seeds showed.** With the physics unchanged and only the situations new, two kinds of novelty behaved
+in opposite ways. With the scene 10 units from the origin, 53 to 98% of the one-step error was visible (two M1s and
+an M2), and the correction cut costly decisions from 21 to 0. With starting speeds five times the usual, 1% of it
+was, and the correction cut costly decisions from 49 to 48. Starting speeds × 3 and pushes twice the training
+maximum made no costly decisions, so they say nothing about repair. On the way, three ideas were tried and dropped.
+Nothing computed from the model alone can detect a change in the physics: on a bank that keeps near-ties, every
+model, corrected or not, made the same decisions under D × 1.5, and the predicted margin flagged the costly ones at
+chance (AUROC 0.48), so the 0.82 in version 1 came from the bank's 5% filter, which picked situations using the
+shifted truth. A diagnosis of physics changes from observed transitions worked, but its main half follows from the
+maths. And the five-model ensemble also removes the costly decisions far from the origin.
+
+**The proposed explanation.** Outside their data, networks become close to linear along each direction (Xu et al.,
+2021, for ReLU networks; ours use SiLU, which also turns linear far from zero). A quantity the physics ignores, like
+where the scene is, gets a small, arbitrary dependence in training, and outside the data that dependence grows with
+nothing to make it turn with the scene: the learned symmetry breaks, the check sees it and averaging cancels it. A
+quantity the physics uses, like how fast two discs close in, is learned from data that look the same from every
+angle, so the network's guess at it stays nearly symmetric even where the guess is wrong: the error is invisible.
+In short, the symmetry breaks in a new frame and holds for new physics.
+
+**The test.** Two new kinds of novelty, chosen to tell this explanation from the obvious alternative ("large
+velocities give invisible error"), and not looked at on the dev seeds beyond checking that the code runs:
+
+- **Drift:** every disc and the goal get the same extra velocity of 2 along x. The physics ignores it (the truth's
+  returns match the plain bank's to 10⁻⁹, checked), but the velocities are as far outside training as at five
+  times the speed (99% of training speeds are below 1.51). A new frame.
+- **Crowded:** one distractor starts 0.35 from the target, where the closest pair in 50,000 training states was
+  0.50, so the repulsion is stronger than anything in training. Familiar positions and speeds, new physics.
+
+**Fixed for the test run.** M1 and M2, five seeds each; M3 has the symmetry built in, so it has nothing to break.
+Banks of 100 situations in all 16 rotations, near-ties kept (margin 10⁻⁶). Shifts: far 10 (scene moved 10 along x),
+speed × 5 (starting speeds N(0, 1.5²)), drift 2 and crowded 0.35. The visible share is Σ‖F̂ − F̂_c‖² over
+Σ‖F̂ − F‖², one step at a time along the true rollouts of every candidate, averaged over the 10 models. A decision
+is costly if it ends more than 0.05 further from the goal than the best candidate would. A shift counts as broken
+and repaired if its visible share is 0.5 or more and the correction removes at least half of its costly decisions,
+and as kept and not repaired if the share is 0.1 or less and the correction removes less than a fifth. The part
+about costly decisions counts only if the models make at least 20 of them, pooled.
+
+**H8, replication.** Far 10 is broken and repaired; speed × 5 is kept and not repaired. *Wrong if* either fails.
+*Confidence:* high; these are the dev results on new situations.
+
+**H9, the test.** Drift is broken and repaired; crowded is kept and not repaired. *Wrong if* either fails.
+*Confidence:* moderate. If drift is not repaired, the explanation is wrong, and large velocities themselves give
+invisible error. If crowded is repaired, new physics can break a learned symmetry too, and the line runs somewhere
+else.
+
+**Reported beside them, not predicted.**
+
+- **M1 against M2.** Whether learning the symmetry from turned data (M2) makes it hold any better outside the data,
+  shift by shift.
+- **One pose against the average.** The model asked once, with the scene turned until the agent faces the target
+  along +x (the canonicalisation of Mondal et al.), balance fixed as in the correction. It is exactly symmetric at
+  one call instead of 16, but it keeps the error of the one pose it asks about instead of averaging it away. If
+  averaging repairs far 10 and one pose doesn't, the repair comes from cancelling the broken part, not from being
+  symmetric. The maths makes that likely on average but doesn't guarantee it, so it is reported, not predicted.
