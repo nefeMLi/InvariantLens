@@ -1,5 +1,7 @@
-"""The audit: rotation average, balance fix, the invisible part of an error, the correction, the canonical pose and the
-certificate."""
+"""Rotations, the balance fix, the corrected model and the label-free bound on wrong decisions.
+
+A model maps (s, a) to the next state. S and M below are the two projections from the README: S keeps the part of a
+model's output that breaks rotation, M the part that breaks the balance of position and momentum."""
 
 import numpy as np
 
@@ -7,39 +9,44 @@ from invariantlens.physics import ROTATIONS, N, balance, rotation, totals
 
 
 def rotate(v):
-    """All 16 rotations of v, whose last axis holds 2-vectors, stacked on a new first axis."""
+    """v in all 16 rotations, stacked on a new first axis. The last axis of v holds 2-vectors."""
     return np.einsum("gij,...j->g...i", ROTATIONS, v)
 
 
 def unrotate(y):
-    """The mean over g of R_g^T y[g]: outputs at the 16 rotations of an input, turned back and averaged."""
+    """Turn y[g] back by rotation g and average over g."""
     return np.einsum("gji,g...j->...i", ROTATIONS, y) / len(ROTATIONS)
 
 
 def average(f):
-    """P_G f: f on the 16 rotations of (s, a), each output rotated back, then averaged."""
-    return lambda s, a: unrotate(f(rotate(s), rotate(a)))
+    """f asked in all 16 rotations, with the answers turned back and averaged (I - S)."""
+
+    def averaged(s, a):
+        return unrotate(f(rotate(s), rotate(a)))
+
+    return averaged
 
 
 def fix(y, target=0.0):
-    """Shift every disc by the same amounts so the totals of y equal target. With target 0 this is I - M."""
+    """Shift every disc by the same amount so that the totals of y equal target. With target 0 this is I - M."""
     return y - (totals(y) - target)[..., :, None, :] / N
 
 
 def invisible(e):
-    """(I - S)(I - M)e = P_G(I - M)e, the part of an error field the audit cannot see."""
+    """The part of an error the checks can't see, (I - S)(I - M)e."""
     return average(lambda s, a: fix(e(s, a)))
 
 
 def corrected(model):
-    """The model with its balance fixed, then averaged over the 16 rotations. Its error is the invisible part."""
+    """The model with its balance fixed and averaged over the 16 rotations. Its error is the invisible part."""
     return average(lambda s, a: fix(model(s, a), balance(s, a)))
 
 
 def canonical(model):
-    """The model asked once, in a standard pose: the scene turned about the origin until the agent faces the target
-    along +x, and the answer turned back. It turns with the scene exactly, at one call instead of 16, but keeps the
-    error of the one pose it asks about instead of averaging it away."""
+    """The model asked once, with the scene turned about the origin until the agent faces the target along +x.
+
+    It turns with the scene exactly, like the corrected model, but keeps the error of the one pose it asks about
+    instead of averaging it away."""
 
     def posed(s, a):
         d = s[..., 0, 1, :] - s[..., 0, 0, :]
@@ -51,21 +58,23 @@ def canonical(model):
 
 
 def signals(model, s, a):
-    """The symmetry and balance signals at each (s, a), from the model alone."""
+    """How much the model breaks rotation, and how much it breaks the balance, at each (s, a)."""
     ys = model(rotate(s), rotate(a))
-    y = ys[0]  # rotation 0 is the identity, so this is the model's own answer
-    d, r = y - unrotate(ys), totals(y) - balance(s, a)
-    return np.sqrt(np.square(d).sum((-3, -2, -1))), np.sqrt(np.square(r).sum((-2, -1)))
+    y = ys[0]  # the first rotation is the identity
+    symmetry = np.sqrt(np.square(y - unrotate(ys)).sum((-3, -2, -1)))
+    balance_error = np.sqrt(np.square(totals(y) - balance(s, a)).sum((-2, -1)))
+    return symmetry, balance_error
 
 
-def surprise(model, s, a, s1):
-    """Per transition (s, a, s'): the squared error |F(s, a) - s'|^2, and its squared visible part
-    |F(s, a) - F_c(s, a)|^2, which needs no s'. Summed over transitions, their ratio is the share of the error that
-    the correction can remove."""
+def error_parts(model, s, a, s1):
+    """The squared error of each prediction, and the squared part of it the correction removes."""
     y = model(s, a)
-    return np.square(y - s1).sum((-3, -2, -1)), np.square(y - corrected(model)(s, a)).sum((-3, -2, -1))
+    error = np.square(y - s1).sum((-3, -2, -1))
+    visible = np.square(y - corrected(model)(s, a)).sum((-3, -2, -1))
+    return error, visible
 
 
 def certificate(choices):
-    """16 - max_k n_k: a lower bound on wrong decisions per orbit, from the choices (..., 16) alone."""
-    return choices.shape[-1] - (choices[..., :, None] == choices[..., None, :]).sum(-1).max(-1)
+    """At least this many of the 16 choices in each orbit are wrong: 16 minus the count of the most common choice."""
+    same = choices[..., :, None] == choices[..., None, :]
+    return choices.shape[-1] - same.sum(-1).max(-1)

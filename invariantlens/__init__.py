@@ -1,1 +1,1 @@
-"""InvariantLens: what can a world model know about its own errors?"""
+"""InvariantLens: where a world model's learned symmetry breaks, and what averaging over the symmetry repairs."""

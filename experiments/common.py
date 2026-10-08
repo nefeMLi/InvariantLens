@@ -1,5 +1,6 @@
-"""Shared bank checks, scoring, statistics, results files and figures for the experiments."""
+"""Helpers shared by the experiments: models, checks, scoring, statistics, caching, results files and figures."""
 
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -7,9 +8,11 @@ import matplotlib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import torch
 from scipy.stats import rankdata
 
 from invariantlens.decisions import reward, rollout
+from invariantlens.models import Net, train, transitions, world_model
 from invariantlens.physics import step
 from invariantlens.symmetry import certificate
 
@@ -17,19 +20,36 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+MODELS = ROOT / "results" / "models"
 RESAMPLES = 1000
 
 
-def check_truth(bank) -> None:
-    """The truth gate: returns agree across each orbit to 1e-9 relative, and the truth always picks the best."""
-    assert np.all(np.abs(bank.returns - bank.returns[:, :1]) <= 1e-9 * np.abs(bank.returns[:, :1])), "orbits disagree"
+def fit(kind, seed):
+    """Train one model, unless it is already saved."""
+    path = MODELS / f"{kind}_{seed}.pt"
+    if not path.exists():
+        MODELS.mkdir(parents=True, exist_ok=True)
+        torch.save(train(kind, seed, transitions(5000, 0), transitions(500, 1)).state_dict(), path)
+
+
+def load(kind, seed, device):
+    net = Net(kind == "M3", torch.zeros(5))
+    net.load_state_dict(torch.load(MODELS / f"{kind}_{seed}.pt"))
+    return world_model(net, device)
+
+
+def check_truth(bank):
+    """The true simulator must agree with itself across every orbit, and always pick the best candidate."""
+    first = bank.returns[:, :1]
+    assert np.all(np.abs(bank.returns - first) <= 1e-9 * np.abs(first)), "orbits disagree"
     assert (bank.returns.argmax(-1) == bank.best[:, None]).all(), "the truth misses the best candidate"
 
 
 def visited(bank, truth=step):
-    """(s, a, F(s, a)) along every true candidate rollout, unrotated; mu is (s, a) in all 16 rotations."""
+    """(s, a, s') at every step of every candidate's true rollout, unrotated."""
     states = rollout(truth, bank.state[:, 0], bank.actions[:, 0])
-    s, s1 = (x.reshape(-1, *states.shape[-3:]) for x in (states[..., :-1, :, :, :], states[..., 1:, :, :, :]))
+    s = states[..., :-1, :, :, :].reshape(-1, *states.shape[-3:])
+    s1 = states[..., 1:, :, :, :].reshape(-1, *states.shape[-3:])
     return s, bank.actions[:, 0].reshape(-1, 2), s1
 
 
@@ -38,33 +58,40 @@ def mean_square(x):
 
 
 def chunks(bank, size=50):
-    """Slices over the situations, so that rollouts of all their candidates fit in memory."""
+    """Slices of the bank small enough for the rollouts of all their candidates to fit in memory."""
     return [slice(i, i + size) for i in range(0, len(bank.best), size)]
 
 
 def choose(model, bank):
-    """The model's choice on every bank entry, (n, 16)."""
-    returns = [reward(rollout(model, bank.state[p], bank.actions[p]), bank.goal[p]) for p in chunks(bank)]
+    """The candidate the model picks in every situation and rotation, shape (n, 16)."""
+    returns = []
+    for part in chunks(bank):
+        states = rollout(model, bank.state[part], bank.actions[part])
+        returns.append(reward(states, bank.goal[part]))
     return np.concatenate(returns).argmax(-1)
 
 
-def score(choices, bank) -> dict:
-    """Wrong-decision rate, normalised regret, and how the wrong decisions sit in their orbits."""
-    wrong, r, bound = choices != bank.best[:, None], bank.returns, certificate(choices)
+def score(choices, bank):
+    """How often the choices are wrong, their regret, and how the wrong ones sit in their orbits."""
+    wrong = choices != bank.best[:, None]
+    bound = certificate(choices)
+    r = bank.returns
     chosen = np.take_along_axis(r, choices[..., None], -1)[..., 0]
     n = int(wrong.sum())
     return {
         "wrong": float(wrong.mean()),
         "n_wrong": n,
         "regret": float(((r.max(-1) - chosen) / (r.max(-1) - r.min(-1))).mean()),
-        "consistent": float(wrong[bound == 0].sum() / n) if n else float("nan"),  # share in orbits that never disagree
-        "coverage": float(bound.sum() / n) if n else float("nan"),  # certificate over the true count
-        "by_situation": wrong.sum(1).tolist(),  # for bootstraps over situations
+        # share of the wrong decisions that sit in orbits where all 16 choices agree
+        "consistent": float(wrong[bound == 0].sum() / n) if n else float("nan"),
+        # how much of the true number of wrong decisions the certificate finds
+        "coverage": float(bound.sum() / n) if n else float("nan"),
+        "by_situation": wrong.sum(1).tolist(),
     }
 
 
-def auroc(signal, wrong) -> float:
-    """How often a wrong decision gets a higher signal than a right one (ties count half); nan if undefined."""
+def auroc(signal, wrong):
+    """How often a wrong decision gets a higher signal than a right one, ties counting half. nan if undefined."""
     signal, wrong = np.ravel(signal), np.ravel(wrong)
     n = int(wrong.sum())
     if signal.max() < 1e-12 or n in (0, wrong.size):
@@ -74,60 +101,81 @@ def auroc(signal, wrong) -> float:
 
 def regret(returns, choices):
     """How much further from the goal each choice ends than the best candidate would."""
-    return returns.max(-1) - np.take_along_axis(returns, choices[..., None], -1)[..., 0]
+    chosen = np.take_along_axis(returns, choices[..., None], -1)[..., 0]
+    return returns.max(-1) - chosen
 
 
-def slope(x, y) -> float:
-    """Least-squares slope of y on x over the finite y; nan with fewer than two."""
+def slope(x, y):
+    """Least-squares slope of y on x over the finite values of y."""
     ok = np.isfinite(y)
-    return float(np.polyfit(x[ok], y[ok], 1)[0]) if ok.sum() > 1 else float("nan")
+    if ok.sum() < 2:
+        return float("nan")
+    return float(np.polyfit(x[ok], y[ok], 1)[0])
 
 
-def bootstrap(values, statistic=np.mean, seed=0) -> tuple[float, float, float]:
-    """The statistic over the rows of values, with a 95% interval from resampling rows; all-nan rows are dropped."""
+def bootstrap(values, statistic=np.mean, seed=0):
+    """The statistic and a 95% interval from resampling the rows of values. Rows that are all nan are dropped."""
     v = np.asarray(values, float)
     v = v[np.isfinite(v).reshape(len(v), -1).any(-1)]
-    if not len(v):
+    if len(v) == 0:
         return float("nan"), float("nan"), float("nan")
-    draws = [statistic(v[i]) for i in np.random.default_rng(seed).integers(0, len(v), (RESAMPLES, len(v)))]
-    return float(statistic(v)), *np.nanpercentile(draws, [2.5, 97.5]).tolist()
+    picks = np.random.default_rng(seed).integers(0, len(v), (RESAMPLES, len(v)))
+    draws = [statistic(v[i]) for i in picks]
+    low, high = np.nanpercentile(draws, [2.5, 97.5])
+    return float(statistic(v)), float(low), float(high)
 
 
 def cached(path, fn, *args):
-    """fn(*args), a dict of arrays, saved to path as soon as it finishes, so an interrupted run resumes. Stored as plain
-    arrays, so loading runs no code."""
+    """fn(*args), a dict of arrays, saved to path when it finishes so that a stopped run can pick up again."""
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         arrays = fn(*args)
-        part = path.with_suffix(".part")  # renamed only once complete, so a killed run leaves no broken file
-        with part.open("wb") as f:  # a file object, so numpy doesn't add .npz to the name
+        # write to a temporary name first, so a killed run never leaves half a file
+        part = path.with_suffix(".part")
+        with part.open("wb") as f:
             np.savez_compressed(f, **arrays)
         part.replace(path)
     with np.load(path) as saved:
         return dict(saved)
 
 
+def spawned(workers=None):
+    """A pool of spawned processes with one thread each. CUDA can't start in a forked process."""
+    spawn = multiprocessing.get_context("spawn")
+    return ProcessPoolExecutor(workers, spawn, initializer=torch.set_num_threads, initargs=(1,))
+
+
 def parallel(fn, tasks):
-    """fn(*task) for every task, across processes, in task order."""
+    """fn(*task) for each task, run across processes, yielded in order."""
     with ProcessPoolExecutor() as pool:
-        yield from (future.result() for future in [pool.submit(fn, *task) for task in tasks])
+        futures = [pool.submit(fn, *task) for task in tasks]
+        for future in futures:
+            yield future.result()
 
 
-def write_results(rows: list[dict], name: str) -> None:
-    """Save rows to results/<name>.parquet; a key a row doesn't have is stored as null."""
+def write_results(rows, name):
+    """Save rows to results/<name>.parquet. A key that a row doesn't have is saved as null."""
     (ROOT / "results").mkdir(exist_ok=True)
     keys = list(dict.fromkeys(key for row in rows for key in row))
-    pq.write_table(
-        pa.Table.from_pylist([{k: row.get(k) for k in keys} for row in rows]), ROOT / "results" / f"{name}.parquet"
-    )
+    table = pa.Table.from_pylist([{key: row.get(key) for key in keys} for row in rows])
+    pq.write_table(table, ROOT / "results" / f"{name}.parquet")
 
 
-def read_results(name: str) -> list[dict]:
+def read_results(name):
     return pq.read_table(ROOT / "results" / f"{name}.parquet").to_pylist()
 
 
-def save_figure(fig, name: str) -> None:
-    """figures/<name>.svg, identical across reruns."""
+def saved_or_run(name, figures_only, run, *args):
+    """The rows saved in results/<name>.parquet if figures_only, otherwise run(*args), saved there."""
+    if figures_only:
+        return read_results(name)
+    rows = run(*args)
+    write_results(rows, name)
+    return rows
+
+
+def save_figure(fig, name):
+    """Save figures/<name>.svg, byte for byte the same on every run."""
     (ROOT / "figures").mkdir(exist_ok=True)
     matplotlib.rcParams["svg.hashsalt"] = name
     fig.savefig(ROOT / "figures" / f"{name}.svg", metadata={"Date": None})

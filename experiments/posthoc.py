@@ -1,9 +1,9 @@
-"""Exploratory, written after all the results were in: two label-free warnings the pre-registration left out, and a
-check of what the noisy-input condition tests.
+"""Exploratory analyses, written after all the version 1 results were in.
 
-The margin is the gap between the model's best and second-best predicted return, so a small one means a close call.
-The orbit flag marks a copy whose choice differs from the most common choice in its orbit. Needs the saved jobs in
-results/learned/ from a learned run."""
+Two label-free warnings that the predictions left out: the margin, the gap between a model's best and second-best
+predicted return, which is small for a close call; and the orbit flag, which marks a copy whose choice differs from
+the most common choice in its orbit. Also a check of what the noisy-input condition really tests. Needs the saved
+evaluations in results/learned/."""
 
 import numpy as np
 
@@ -12,9 +12,23 @@ from experiments.learned import ALL, KINDS, SEEDS, observed, read_job, spearman
 from invariantlens.decisions import make_bank
 from invariantlens.physics import step
 
+
+def margin_and_flag(bank, returns):
+    """Which decisions are wrong, the margin's AUROC for them, and which copies the orbit flag marks."""
+    top = np.sort(returns, -1)
+    margin = top[..., -1] - top[..., -2]
+    choices = returns.argmax(-1)
+    common = np.array([np.bincount(c, minlength=5).argmax() for c in choices])
+    wrong = choices != bank.best[:, None]
+    flag = choices != common[:, None]
+    # the closer the call, the louder the warning
+    return wrong, auroc(margin.max() - margin, wrong), flag
+
+
 if __name__ == "__main__":
-    banks = {shift: make_bank(**kw) for shift, kw in ALL.items() if shift != "input noise"}
+    banks = {shift: make_bank(**settings) for shift, settings in ALL.items() if shift != "input noise"}
     banks["input noise"] = banks["none"]
+
     units = {}
     for shift in ALL:
         for kind in KINDS:
@@ -22,25 +36,27 @@ if __name__ == "__main__":
             for seed in SEEDS:
                 rows, returns = read_job(f"{kind}_{seed}_{shift}")
                 units[kind, seed, shift] = rows[0]
-                top = np.sort(returns, -1)
-                margin = top[..., -1] - top[..., -2]
-                choices = returns.argmax(-1)
-                common = np.array([np.bincount(c, minlength=5).argmax() for c in choices])
-                wrong.append(choices != banks[shift].best[:, None])
-                flag.append(choices != common[:, None])
-                aucs.append(auroc(margin.max() - margin, wrong[-1]))  # the closer the call, the louder the warning
+                w, auc, f = margin_and_flag(banks[shift], returns)
+                wrong.append(w)
+                aucs.append(auc)
+                flag.append(f)
             wrong, flag = np.concatenate(wrong), np.concatenate(flag)
             hits = (wrong & flag).sum()
             print(
                 f"{kind} {shift:12} {wrong.sum():5d} wrong; margin AUROC {np.nanmean(aucs):.3f}; orbit flag marks"
                 f" {flag.sum()}, {hits} of them wrong, {hits / max(wrong.sum(), 1):.0%} of all mistakes"
             )
-    truth = score(choose(step, observed(banks["none"], "input noise")), banks["none"])["n_wrong"]
+
+    noisy = observed(banks["none"], "input noise")
+    truth = score(choose(step, noisy), banks["none"])["n_wrong"]
     print(f"\nThe true simulator on the noisy inputs: {truth} wrong, so those mistakes aren't the models'")
-    for name, last in (("without the noisy inputs", []), ("with far 5 in their place", ["far 5"])):
+
+    for name, extra in (("without the noisy inputs", []), ("with far 5 in their place", ["far 5"])):
+        shifts = ["none", "D x 1.5", "damping", "speed x 2", *extra]
         for key in ("auroc_symmetry", "auroc_balance"):
-            shifts = ["none", "D x 1.5", "damping", "speed x 2", *last]
-            clusters = np.array(
-                [[(units[k, s, x]["visible"], units[k, s, x][key]) for x in shifts] for k in KINDS for s in SEEDS]
-            )
-            print(f"H3 {key} {name}: " + "{:+.2f} [{:+.2f}, {:+.2f}]".format(*bootstrap(clusters, spearman)))
+            clusters = []
+            for kind in KINDS:
+                for seed in SEEDS:
+                    clusters.append([(units[kind, seed, x]["visible"], units[kind, seed, x][key]) for x in shifts])
+            mean, low, high = bootstrap(np.array(clusters), spearman)
+            print(f"H3 {key} {name}: {mean:+.2f} [{low:+.2f}, {high:+.2f}]")

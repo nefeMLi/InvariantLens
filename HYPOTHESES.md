@@ -349,3 +349,42 @@ else.
   one call instead of 16, but it keeps the error of the one pose it asks about instead of averaging it away. If
   averaging repairs far 10 and one pose doesn't, the repair comes from cancelling the broken part, not from being
   symmetric. The maths makes that likely on average but doesn't guarantee it, so it is reported, not predicted.
+
+
+## Results log, 2026-10-08
+
+**The test run.** Predictions committed and pushed at 14:26 on 7 October; the test seeds ran afterwards on Kaggle's
+CPU, and the results were downloaded on 8 October. 100 situations per shift, 16,000 decisions per shift over the 10
+models. The checks passed: far 10 and drift 2 left the truth's returns unchanged.
+
+| Shift | Visible share (models) | Costly decisions: model, one pose, average | Mean regret: model, average |
+|---|---|---|---|
+| far 10 | 0.86 (0.55 to 1.02) | 335, 80, 0 | 3.8·10⁻³, 0.3·10⁻³ |
+| speed × 5 | 0.103 (0.07 to 0.15) | 157, 160, 176 | 1.93·10⁻³, 1.96·10⁻³ |
+| drift 2 | 0.67 (0.54 to 0.79) | 0, 0, 0 | 0.09·10⁻³, 0.06·10⁻³ |
+| crowded | 0.04 (0.02 to 0.11) | 158, 144, 112 | 1.98·10⁻³, 1.38·10⁻³ |
+
+**H8 failed.** Far 10 was broken and repaired. Speed × 5 was not repaired (157 to 176), but its visible share, 0.103,
+was just above the bound of 0.10.
+
+**H9 failed.** Drift was broken (0.67), and made no costly decisions, so only its share counted. Crowded was kept
+(0.04), but the correction removed 29% of its costly decisions, more than the fifth allowed.
+
+**Reported beside them.** One pose against the average: at far 10 the standard pose left 80 costly decisions and
+the average none, so the repair comes from averaging, not from being symmetric. M1 against M2: the shares were the
+same within a few hundredths on every shift (0.85 and 0.88, 0.11 and 0.09, 0.69 and 0.65, 0.04 and 0.05), so
+learning the symmetry from turned data didn't make it hold any better outside the data.
+
+**Not pre-registered, computed after the results.**
+
+- The split itself held for every model: on both frame shifts each of the 10 models had a share of 0.54 or more, on
+  both physics shifts 0.15 or less.
+- Intervals, resampling the 100 situations, for the change in mean regret the correction made, in units of 10⁻³:
+  −3.4 [−5.6, −1.9] at far 10, +0.02 [−0.22, +0.34] at speed × 5, −0.035 [−0.076, −0.005] at drift 2 and −0.60
+  [−1.19, −0.16] at crowded. So averaging did repair part of crowded, and of drift's small errors.
+- The decision part of both predictions rested on very few situations. The corrected models choose alike in all 16
+  rotations, so their costly decisions come in whole orbits of 16; the 112 at crowded are 7 situations. And the
+  raw models' costly decisions under the physics shifts came from 1 to 4 situations per model.
+- The bound of 0.10 for speed × 5 came from three models on 30 dev situations, where the share was 0.01. On 100
+  situations it was ten times that: a few extreme starting speeds dominate the error, so the dev estimate was too
+  small a sample.
